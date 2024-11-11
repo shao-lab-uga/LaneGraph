@@ -21,7 +21,7 @@ class Train(TrainingFramework):
 	def __init__(self):
 		self.image_size = 640
 		self.batch_size = 4
-		self.datafolder = "../dataset_training"
+		self.datafolder = "./dataset_training"
 		self.training_range = []
 		self.use_sdmap = False
 		self.backbone = 'resnet34v3' #sys.argv[1]
