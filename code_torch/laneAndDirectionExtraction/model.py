@@ -2,28 +2,33 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.getcwd()))
 
-import tensorflow as tf 
 import sys 
-from resnet34unet import resnet34unet_v3, unet, unet_dilated
-
-from resnet34unet_torch import UnetResnet34
-import torch
 
 class LaneModel():
 	def __init__(self, sess, size = 640, batchsize = 4, sdmap = False, backbone = "resnet34v3"):
-		self.sess = sess 
-		self.batchsize = batchsize
-		self.input = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 3])
-		self.target = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 1])
-		self.target_normal = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 2])
-		self.sdmap = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 1])
-		self.backbone = backbone
-		self.mask = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 1])
-		
-		
-		self.lr = tf.placeholder(dtype=tf.float32)
-		self.is_training = tf.placeholder(tf.bool, name="istraining")
+		if sess is not None:
+			DISABLE_TENSORFLOW_ALL = False
+		else:
+			DISABLE_TENSORFLOW_ALL = True
 
+		if not DISABLE_TENSORFLOW_ALL:
+			import tensorflow as tf 
+			from resnet34unet import resnet34unet_v3, unet, unet_dilated
+
+			self.sess = sess 
+			self.input = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 3])
+			self.target = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 1])
+			self.target_normal = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 2])
+			self.sdmap = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 1])
+			self.mask = tf.placeholder(dtype = tf.float32, shape = [None, size, size, 1])
+			self.lr = tf.placeholder(dtype=tf.float32)
+			self.is_training = tf.placeholder(tf.bool, name="istraining")
+		else:
+			import torch
+			from resnet34unet_torch import UnetResnet34
+
+		self.backbone = backbone
+		self.batchsize = batchsize
 		self.hassdmap = sdmap
 
 		# if sdmap:
@@ -35,13 +40,15 @@ class LaneModel():
 			# pytorch model
 			#==========================
 			device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-			self.resnet34_torch = UnetResnet34().to(device)
+			self.backboneModelTorch = UnetResnet34().to(device)
 
-			self.optimizer_torch = torch.optim.Adam(self.resnet34_torch.parameters(), lr=0.001)
+			self.optimizer_torch = torch.optim.Adam(self.backboneModelTorch.parameters(), lr=0.001)
+			self.device = device
 			#==========================
 			#==========================
 
-			output = resnet34unet_v3(self.input, self.is_training, ch_in = 3, ch_out = 4)
+			if not DISABLE_TENSORFLOW_ALL:
+				output = resnet34unet_v3(self.input, self.is_training, ch_in = 3, ch_out = 4)
 
 		elif self.backbone == "resnet34v3":
 			output = resnet34unet_v3(self.input, self.is_training, ch_in = 3, ch_out = 4)
@@ -52,26 +59,30 @@ class LaneModel():
 		elif self.backbone == "unet_dilated":
 			output = unet_dilated(self.input, self.is_training, ch_in = 3, ch_out = 4)
 
-		self.loss = self.singlescaleloss(output[:,:,:,0:2], self.target, self.mask)
-		self.loss += tf.reduce_mean(self.mask * tf.square(self.target_normal - output[:,:,:,2:4]))
+		if not DISABLE_TENSORFLOW_ALL:
+			self.loss = self.singlescaleloss(output[:,:,:,0:2], self.target, self.mask)
+			self.loss += tf.reduce_mean(self.mask * tf.square(self.target_normal - output[:,:,:,2:4]))
 
-		#self.loss += self.celoss(output[:,:,:,2:4], self.target_t, self.mask)
-		
-		output_seg = tf.nn.softmax(output[:,:,:,0:2])[:,:,:,0:1]
-		output_direction = output[:,:,:,2:4]
+			#self.loss += self.celoss(output[:,:,:,2:4], self.target_t, self.mask)
+			
+			output_seg = tf.nn.softmax(output[:,:,:,0:2])[:,:,:,0:1]
+			output_direction = output[:,:,:,2:4]
 
-		self.output = tf.concat([output_seg, output_direction], axis=3)
+			self.output = tf.concat([output_seg, output_direction], axis=3)
 
-		self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
-		
-		
-		self.sess.run(tf.global_variables_initializer())
-		self.saver = tf.train.Saver(max_to_keep=21)
+			self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
+			
+			
+			self.sess.run(tf.global_variables_initializer())
+			self.saver = tf.train.Saver(max_to_keep=21)
 	
+		self.DISABLE_TENSORFLOW_ALL = DISABLE_TENSORFLOW_ALL
+
 	#==========================
 	# pytorch loss
 	#==========================
 	def lossFunctionTorch(self, output, mask, target, target_normal):
+		import torch
 
 		t1 = target # N,1,640,640
 		p = output # N,3,640,640, 1st is seg, 2nd 3rd direction
@@ -101,6 +112,8 @@ class LaneModel():
 	#==========================
 
 	def singlescaleloss(self, p, target, mask):
+		import tensorflow as tf
+
 		t1 = target
 		
 		def ce_loss(p, t):
@@ -125,6 +138,8 @@ class LaneModel():
 		return loss 
 
 	def celoss(self, p, target, mask):
+		import tensorflow as tf
+
 		t1 = target
 		def ce_loss(p, t):
 			#t = tf.concat([t,1-t], axis=3)
@@ -176,8 +191,16 @@ class LaneModel():
 		return self.sess.run(ops, feed_dict=feed_dict)
 
 	def saveModel(self, path):
-		self.saver.save(self.sess, path)
+		if not self.DISABLE_TENSORFLOW_ALL:
+			self.saver.save(self.sess, path)
+		else:
+			import torch
+			torch.save(self.backboneModelTorch.state_dict(), path+'.pth')
 
 	def restoreModel(self, path):
-		self.saver.restore(self.sess, path)
+		if not self.DISABLE_TENSORFLOW_ALL:
+			self.saver.restore(self.sess, path)
+		else:
+			import torch
+			self.backboneModelTorch.load_state_dict(torch.load(path+'.pth'))
 
