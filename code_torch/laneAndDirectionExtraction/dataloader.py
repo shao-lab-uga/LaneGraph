@@ -43,12 +43,21 @@ class Dataloader():
 
 		for i in range(self.preload_tiles if ind is None else 1):
 			ind = random.choice(self.indrange) if ind is None else ind 
-			sat_img = scipy.ndimage.imread(self.folder+"/sat%s.jpg" % ind)
-			mask = scipy.ndimage.imread(self.folder+"/regionmask%s.jpg" % ind)
-			target = scipy.ndimage.imread(self.folder+"/lane%s.jpg" % ind)
-			#target_t = scipy.ndimage.imread(self.folder+"/terminal%s.jpg" % ind)
-			normal = scipy.ndimage.imread(self.folder+"/normal%s.jpg" % ind)
-			#sdmap = scipy.ndimage.imread(self.folder+"/sdmap%s.jpg" % ind)
+			try:
+				sat_img = scipy.ndimage.imread(self.folder+"/sat%s.jpg" % ind)
+				mask = scipy.ndimage.imread(self.folder+"/regionmask%s.jpg" % ind)
+				target = scipy.ndimage.imread(self.folder+"/lane%s.jpg" % ind)
+				#target_t = scipy.ndimage.imread(self.folder+"/terminal%s.jpg" % ind)
+				normal = scipy.ndimage.imread(self.folder+"/normal%s.jpg" % ind)
+				#sdmap = scipy.ndimage.imread(self.folder+"/sdmap%s.jpg" % ind)
+			except:
+				import imageio
+				sat_img = imageio.imread(self.folder+"/sat%s.jpg" % ind)
+				mask = imageio.imread(self.folder+"/regionmask%s.jpg" % ind)
+				target = imageio.imread(self.folder+"/lane%s.jpg" % ind)
+				#target_t = imageio.imread(self.folder+"/terminal%s.jpg" % ind)
+				normal = imageio.imread(self.folder+"/normal%s.jpg" % ind)
+				#sdmap = mageio.imread(self.folder+"/sdmap%s.jpg" % ind)
 
 			#target_t = cv2.GaussianBlur(target_t, (5,5), 1.0)
 
@@ -77,7 +86,7 @@ class Dataloader():
 				normal = scipy.ndimage.rotate(normal, angle, reshape=False, cval=127)
 
 
-			normal = (normal.astype(np.float) - 127) / 127.0
+			normal = (normal.astype(float) - 127) / 127.0
 			normal = normal[:,:,1:3] # cv2 is BGR scipy and Image PIL are RGB
 
 			normal_x = normal[:,:,1]
@@ -91,9 +100,9 @@ class Dataloader():
 			normal = np.clip(normal, -0.9999, 0.9999)
 				
 			
-			sat_img = sat_img.astype(np.float) / 255.0 - 0.5 
-			mask = mask.astype(np.float) / 255.0 
-			target = target.astype(np.float) / 255.0
+			sat_img = sat_img.astype(float) / 255.0 - 0.5 
+			mask = mask.astype(float) / 255.0 
+			target = target.astype(float) / 255.0
 			#sdmap = sdmap.astype(np.float) / 255.0
 			# target_t = target_t.astype(np.float) / 255.0
 			
