@@ -73,10 +73,8 @@ class LaneModel():
 	#==========================
 	def lossFunctionTorch(self, output, mask, target, target_normal):
 
-		# mask = 1
-
-		t1 = target
-		p = output
+		t1 = target # N,1,640,640
+		p = output # N,3,640,640, 1st is seg, 2nd 3rd direction
 
 		def ce_loss(p, t):
 			#t = tf.concat([t,1-t], axis=3)

@@ -65,30 +65,30 @@ class TrainingFramework():
 				t1 = time()
 
 				if 'torch' in config["model_name"]:
-					input = torch.permute(torch.FloatTensor(batch[0]), (0,3,1,2)) 					# need to rearrange order, N,640,640,4->N,4,640,640
-					mask = torch.permute(torch.FloatTensor(batch[1]), (0,3,1,2))
-					target = torch.permute(torch.FloatTensor(batch[2]), (0,3,1,2))
-					target_normal = torch.permute(torch.FloatTensor(batch[3]), (0,3,1,2))
+					input = torch.permute(torch.FloatTensor(batch[0]), (0,3,1,2)) 		# need to rearrange order, N,640,640,4->N,4,640,640
+					mask = torch.permute(torch.FloatTensor(batch[1]), (0,3,1,2))  # N,1,640,640
+					target = torch.permute(torch.FloatTensor(batch[2]), (0,3,1,2)) # N,1,640,640
+					target_normal = torch.permute(torch.FloatTensor(batch[3]), (0,3,1,2)) # N,2,640,640
 				
 					# Zero your gradients for every batch
 					model.optimizer_torch.zero_grad()
 
 					# Make predictions for this batch
 					output_res = model.resnet34_torch(input) 
-					output_seg = torch.softmax(output_res[:,0:2,:,:], dim=0)[:,0:1,:,:]
+					output_seg = torch.softmax(output_res[:,0:2,:,:], dim=1)[:,0:1,:,:] # torch.softmax(output_res[:,0:2,:,:], dim=1)[0,0:1,:,:] equal to torch.softmax(output_res[0,0:2,:,:], dim=0)[0:1,:,:]
 					output_direction = output_res[:,2:4,:,:]
 					output = torch.concat([output_seg, output_direction], axis=1) # N,3,640,640
 
 					# Compute the loss and its gradients
-					loss = model.lossFunctionTorch(output, mask, target, target_normal)
-					loss.backward()
+					lossCur = model.lossFunctionTorch(output, mask, target, target_normal)
+					lossCur.backward()
 
 					# Adjust learning weights
 					model.optimizer_torch.param_groups[0]['lr'] = lr
 					model.optimizer_torch.step()
 
 					# agument result
-					result = [loss.item(), torch.permute(output,(0,2,3,1)).detach().cpu().numpy(), None]
+					result = [lossCur.item(), torch.permute(output,(0,2,3,1)).detach().cpu().numpy(), None]
 
 				else:
 					result = self.train(batch, lr)
