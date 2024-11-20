@@ -89,7 +89,7 @@ class TrainingFramework():
 				output = torch.concat([output_seg, output_direction], axis=1) # N,3,640,640
 
 				# Compute the loss and its gradients
-				lossCur = model.lossFunctionTorch(output, mask, target, target_normal)
+				lossCur = model.lossFunctionTorch(output_res, mask, target, target_normal)
 				lossCur.backward()
 
 				# Adjust learning weights

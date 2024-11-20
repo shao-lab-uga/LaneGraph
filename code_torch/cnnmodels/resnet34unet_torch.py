@@ -70,16 +70,16 @@ class UnetResnet34(nn.Module):
 
         self.lastlayer = nn.Sequential(
             nn.ConvTranspose2d(in_channels=filters[0], out_channels=filters[0], kernel_size=2, stride=2),
-            nn.Conv2d(filters[0], num_classes, kernel_size=3, padding=1, bias=False)
+            nn.Conv2d(filters[0], num_classes, kernel_size=3, padding=1, bias=True)
         )
-    
+
     def forward(self, x):
         e1 = self.firstlayer(x) # N,3,640,640->N,64,320,320
         maxe1 = self.maxpool(e1) # N,64,320,320->N,64,160,160
         e2 = self.encoder1(maxe1) # N,64,160,160->N,64,160,160
         e3 = self.encoder2(e2) # N,64,160,160->N,128,80,80
         e4 = self.encoder3(e3) # N,128,80,80->N,256,40,40
-        e5 = self.encoder4(e4) # N,256,40,40->N,512,20,20
+        e5 = self.encoder4(e4) # N,256,40,40->N,512,   20,20
         
         c = self.bridge(e5) # N,512,20,20->N,1024,10,10
         
