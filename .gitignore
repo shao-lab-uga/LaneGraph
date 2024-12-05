@@ -7,3 +7,9 @@ validation_laneExtraction*/*
 
 
 LogTmp/*
+
+# unpacked dataset files
+msc_dataset/dataset_unpacked/*
+
+# pycharm files
+.idea/*
