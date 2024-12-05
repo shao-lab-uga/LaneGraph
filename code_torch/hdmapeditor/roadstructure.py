@@ -1,20 +1,23 @@
 import pickle
+
 ENABLE_LOG = False
 
-def dist2(p1,p2):
+
+def dist2(p1, p2):
     a = p1[0] - p2[0]
     b = p1[1] - p2[1]
-    return a*a + b*b
+    return a * a + b * b
 
-class LaneMap():
+
+class LaneMap:
     def __init__(self):
         self.nodes = {}
-        self.nid = 0 
+        self.nid = 0
 
         self.neighbors = {}
         self.neighbors_all = {}
 
-        self.edgeType = {} # "way" or "link"
+        self.edgeType = {}  # "way" or "link"
         self.nodeType = {}
 
         self.history = []
@@ -38,22 +41,22 @@ class LaneMap():
 
         # create index?
 
-    def query(self, p, nodelist = None):
+    def query(self, p, nodelist=None):
         if nodelist is None or len(nodelist) == 0:
-            bestd, bestnid = 10*10, None
+            bestd, bestnid = 10 * 10, None
             for nid, pos in self.nodes.items():
                 if self.nodeType[nid] == "link":
                     continue
 
                 d = dist2(p, pos)
                 if d < bestd:
-                    bestd = d 
+                    bestd = d
                     bestnid = nid
 
             return bestnid
 
         else:
-            bestd, bestnid = 10*10, None
+            bestd, bestnid = 10 * 10, None
             for nid in nodelist:
                 pos = self.nodes[nid]
                 # if self.nodeType[nid] == "link":
@@ -61,11 +64,11 @@ class LaneMap():
 
                 d = dist2(p, pos)
                 if d < bestd:
-                    bestd = d 
+                    bestd = d
                     bestnid = nid
 
             return bestnid
-    
+
     def findLink(self, nid):
         nodelist = []
         queue = [nid]
@@ -94,8 +97,8 @@ class LaneMap():
             if nid in visited:
                 continue
 
-            start = nid 
-            cur = nid 
+            start = nid
+            cur = nid
             polygon = []
             while True:
                 polygon.append(cur)
@@ -113,11 +116,10 @@ class LaneMap():
 
             if len(polygon) > 1 and polygon[0] == polygon[-1]:
                 polygons.append(polygon)
-           
+
         return polygons
 
-
-    def addNode(self, p, updateNodeType = True):
+    def addNode(self, p, updateNodeType=True):
         self.history.append(["addNode", p, self.nid])
 
         self.nodes[self.nid] = p
@@ -128,28 +130,27 @@ class LaneMap():
             self.updateNodeType()
         return self.nid - 1
 
-    def addEdge(self, n1, n2, edgetype = "way", updateNodeType = True):
+    def addEdge(self, n1, n2, edgetype="way", updateNodeType=True):
         self.history.append(["addEdge", n1, n2, edgetype])
 
-        if n2 not in  self.neighbors[n1]:
+        if n2 not in self.neighbors[n1]:
             self.neighbors[n1].append(n2)
-        
-        if n2 not in  self.neighbors_all[n1]:
+
+        if n2 not in self.neighbors_all[n1]:
             self.neighbors_all[n1].append(n2)
-        
-        if n1 not in  self.neighbors_all[n2]:
+
+        if n1 not in self.neighbors_all[n2]:
             self.neighbors_all[n2].append(n1)
-        
-        
-        edge = (n1,n2)
+
+        edge = (n1, n2)
         self.edgeType[edge] = edgetype
-        edge = (n2,n1)
+        edge = (n2, n1)
         self.edgeType[edge] = edgetype
         if updateNodeType:
             self.updateNodeType()
 
         pass
-    
+
     def deleteNode(self, nid):
         self.history.append(["deleteNode", nid])
         if ENABLE_LOG:
@@ -163,7 +164,7 @@ class LaneMap():
 
         if nid in self.nodes:
             del self.nodes[nid]
-        
+
         if nid in self.neighbors:
             del self.neighbors[nid]
 
@@ -190,8 +191,8 @@ class LaneMap():
             if ENABLE_LOG:
                 print(self.neighbors_all[n2], n1)
 
-        if (n1,n2) in self.edgeType:
-            del self.edgeType[(n1,n2)]
+        if (n1, n2) in self.edgeType:
+            del self.edgeType[(n1, n2)]
 
     def checkConsistency(self):
         for nid in self.nodes.keys():
@@ -209,8 +210,6 @@ class LaneMap():
                     print("incomplete neighbors", nid, nn)
                     self.neighbors_all[nn].append(nid)
 
-
-
     def undo(self):
         if len(self.history) > 0:
             item = self.history.pop()
@@ -220,10 +219,9 @@ class LaneMap():
                 del self.neighbors[nid]
                 del self.neighbors_all[nid]
                 del self.nodeType[nid]
-                #self.nid = nid
+                # self.nid = nid
                 # edgetype?
 
-            
             elif item[0] == "addEdge":
                 n1, n2, edgeType = item[1], item[2], item[3]
                 if n2 in self.neighbors[n1]:
@@ -233,11 +231,3 @@ class LaneMap():
                 if n1 in self.neighbors_all[n2]:
                     self.neighbors_all[n2].remove(n1)
                 # edgetype?
-
-
-
-
-
-
-
-    
