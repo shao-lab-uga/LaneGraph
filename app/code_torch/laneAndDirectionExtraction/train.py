@@ -21,7 +21,7 @@ sys.path.append(
 from dataloader import ParallelDataLoader
 from model import LaneModel
 
-from training import TrainingFramework
+from framework.training import TrainingFramework
 
 from PIL import Image
 import numpy as np
@@ -33,23 +33,23 @@ import shutil
 from datetime import datetime
 
 DISABLE_TENSORFLOW_ALL = True  # global flag to disable tensorflow all
-SAVE_FIGURE_INTERVAL = 50  # save every XX steps
+SAVE_FIGURE_INTERVAL = 250  # save every XX steps
 
 
 class Train(TrainingFramework):
     def __init__(self):
         self.image_size = 640
         self.batch_size = 4
-        self.datafolder = "./dataset_training"
+        self.datafolder = "../../../msc_dataset/dataset_unpacked"
         self.training_range = []
         self.use_sdmap = False
         self.backbone = "resnet34_torch"  #'resnet34_torch' 'resnet34v3' #sys.argv[1]
-
-        dataset_split = json.load(open(".\{}\split_all.json".format(versionName)))
+        print(os.getcwd())
+        with open("../split_all.json") as json_file:
+            dataset_split = json.load(json_file)
 
         for tid in dataset_split["training"]:
-            for i in range(9):
-                self.training_range.append("_%d" % (tid * 9 + i))
+            self.training_range.append(f"_{tid}")
 
         self.instance = "_laneExtraction_run1_640_%s_500ep" % self.backbone
         if self.use_sdmap:
@@ -75,7 +75,7 @@ class Train(TrainingFramework):
         self.counter = 0
         self.disloss = 0
 
-        self.epochsize = (
+        self.epochsize = (  # will need to up this due to lower training range?
             len(self.training_range)
             * 2048
             * 2048

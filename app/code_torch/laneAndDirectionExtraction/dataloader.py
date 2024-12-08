@@ -1,11 +1,15 @@
 import numpy as np
 import threading
-import scipy.ndimage
+import scipy
 from time import time
 import random
 import math
+import imageio.v3 as imageio
+import json
 
 global_lock = threading.Lock()
+
+import cv2
 
 
 class Dataloader:
@@ -14,7 +18,7 @@ class Dataloader:
         folder,
         indrange,
         image_size=640,
-        datasetImageSize=2048,
+        datasetImageSize=4096,
         preload_tiles=4,
         testing=False,
     ):
@@ -31,6 +35,7 @@ class Dataloader:
         )
         self.masks = np.ones((preload_tiles, datasetImageSize, datasetImageSize, 1))
         self.sdmaps = np.ones((preload_tiles, datasetImageSize, datasetImageSize, 1))
+        self.centers = [np.empty(0)] * preload_tiles
 
         self.image_batch = np.zeros((8, image_size, image_size, 3))
         self.normal_batch = np.zeros((8, image_size, image_size, 2))
@@ -53,23 +58,15 @@ class Dataloader:
 
         for i in range(self.preload_tiles if ind is None else 1):
             ind = random.choice(self.indrange) if ind is None else ind
-            try:
-                sat_img = scipy.ndimage.imread(self.folder + "/sat%s.jpg" % ind)
-                mask = scipy.ndimage.imread(self.folder + "/regionmask%s.jpg" % ind)
-                target = scipy.ndimage.imread(self.folder + "/lane%s.jpg" % ind)
-                # target_t = scipy.ndimage.imread(self.folder+"/terminal%s.jpg" % ind)
-                normal = scipy.ndimage.imread(self.folder + "/normal%s.jpg" % ind)
-                # sdmap = scipy.ndimage.imread(self.folder+"/sdmap%s.jpg" % ind)
-            except:
-                import imageio
 
-                sat_img = imageio.imread(self.folder + "/sat%s.jpg" % ind)
-                mask = imageio.imread(self.folder + "/regionmask%s.jpg" % ind)
-                target = imageio.imread(self.folder + "/lane%s.jpg" % ind)
-                # target_t = imageio.imread(self.folder+"/terminal%s.jpg" % ind)
-                normal = imageio.imread(self.folder + "/normal%s.jpg" % ind)
-                # sdmap = mageio.imread(self.folder+"/sdmap%s.jpg" % ind)
-
+            sat_img = imageio.imread(self.folder + "/sat%s.jpg" % ind)
+            mask = imageio.imread(self.folder + "/regionmask%s.jpg" % ind)
+            target = imageio.imread(self.folder + "/lane%s.jpg" % ind)
+            # target_t = imageio.imread(self.folder+"/terminal%s.jpg" % ind)
+            normal = imageio.imread(self.folder + "/normal%s.jpg" % ind)
+            # sdmap = mageio.imread(self.folder+"/sdmap%s.jpg" % ind)
+            with open(self.folder + f"/link{ind}.json", "r") as json_file:
+                centers = json.load(json_file)[3]
             # target_t = cv2.GaussianBlur(target_t, (5,5), 1.0)
 
             if len(np.shape(mask)) == 3:
@@ -95,6 +92,26 @@ class Dataloader:
                 # sdmap = scipy.ndimage.rotate(sdmap, angle, reshape=False)
                 # target_t = scipy.ndimage.rotate(target_t, angle, reshape=False)
                 normal = scipy.ndimage.rotate(normal, angle, reshape=False, cval=127)
+
+                # Rotating intersection centeres to match new angle
+                im_center = np.array((self.datasetImageSize, self.datasetImageSize)) / 2
+                angle_rad = np.radians(angle)
+                rotation_matrix = np.array(
+                    [
+                        [np.cos(angle_rad), -np.sin(angle_rad)],
+                        [np.sin(angle_rad), np.cos(angle_rad)],
+                    ]
+                )
+                centers = centers - im_center
+                rot_centers = np.dot(rotation_matrix.T, centers.T).T
+                rot_centers = np.ndarray.round(rot_centers + im_center)
+                centers = []
+                for rot_x, rot_y in rot_centers:
+                    if (
+                        0 <= rot_x < self.datasetImageSize - 1
+                        and 0 <= rot_y < self.datasetImageSize - 1
+                    ):
+                        centers.append([rot_x, rot_y])
 
             normal = (normal.astype(float) - 127) / 127.0
             normal = normal[:, :, 1:3]  # cv2 is BGR scipy and Image PIL are RGB
@@ -125,6 +142,7 @@ class Dataloader:
             # self.targets_t[i,:,:,0] = target_t
             self.normal[i, :, :, :] = normal
             # self.sdmaps[i,:,:,0] = sdmap
+            self.centers[i] = np.array(centers)
 
             # augmentation on images
             if self.testing == False:
@@ -147,8 +165,34 @@ class Dataloader:
         for i in range(batchsize):
             while True:
                 tile_id = random.randint(0, self.preload_tiles - 1)
-                x = random.randint(0, self.datasetImageSize - 1 - self.image_size)
-                y = random.randint(0, self.datasetImageSize - 1 - self.image_size)
+                # x = random.randint(0, self.datasetImageSize - 1 - self.image_size)
+                # y = random.randint(
+                #    0, self.datasetImageSize - 1 - self.image_size
+                # )  # selects bottom left point in image
+                margin_max = 200  # minimum distance from center to image edge
+                noise_max = 2
+
+                center_x, center_y = self.centers[tile_id][
+                    np.random.choice(self.centers[tile_id].shape[0])
+                ]
+                center_x = self.datasetImageSize - center_x
+
+                if (
+                    center_x < margin_max
+                    or center_x > self.datasetImageSize - margin_max
+                ) or (
+                    center_y < margin_max
+                    or center_y > self.datasetImageSize - margin_max
+                ):
+                    continue  # selects next center if too close to edge
+
+                noise = [0, 0]  # np.round(np.random.normal(0, noise_max, 2))
+                x = int(center_x + noise[0] - (self.image_size / 2))
+                y = int(center_y + noise[1] - (self.image_size / 2))
+                x = max(0, min(x, self.datasetImageSize - self.image_size))
+                y = max(0, min(y, self.datasetImageSize - self.image_size))
+
+                # below if: continue statements validate that good data exists
 
                 if (
                     np.sum(
@@ -177,7 +221,10 @@ class Dataloader:
                     continue
 
                 self.image_batch[i, :, :, :] = self.images[
-                    tile_id, x : x + self.image_size, y : y + self.image_size, :
+                    tile_id,
+                    x : x + self.image_size,
+                    y : y + self.image_size,
+                    :,
                 ]
                 self.mask_batch[i, :, :, :] = self.masks[
                     tile_id, x : x + self.image_size, y : y + self.image_size, :

@@ -15,7 +15,7 @@ class LaneModel:
 
         if not DISABLE_TENSORFLOW_ALL:
             import tensorflow as tf
-            from resnet34unet import resnet34unet_v3, unet, unet_dilated
+            from cnnmodels.resnet34unet import resnet34unet_v3, unet, unet_dilated
 
             self.sess = sess
             self.input = tf.placeholder(dtype=tf.float32, shape=[None, size, size, 3])
@@ -29,7 +29,7 @@ class LaneModel:
             self.is_training = tf.placeholder(tf.bool, name="istraining")
         else:
             import torch
-            from resnet34unet_torch import UnetResnet34
+            from cnnmodels.resnet34unet_torch import UnetResnet34
 
         self.backbone = backbone
         self.batchsize = batchsize

@@ -6,7 +6,7 @@ model_laneExtraction*/*
 validation_laneExtraction*/*
 
 
-LogTmp/*
+*/LogTmp/*
 
 # unpacked dataset files
 msc_dataset/dataset_unpacked/*

@@ -17,7 +17,7 @@ class TrainingFramework:
         if "logfile" in config:
             logfile = config["logfile"]
         else:
-            logfile = "log.json"
+            logfile = "logfile.json"
 
         use_validation = config["use_validation"]
 
