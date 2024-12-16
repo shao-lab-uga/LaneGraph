@@ -3,25 +3,10 @@ import sys
 
 versionName = "code_torch"
 
-sys.path.append(os.path.dirname(os.path.dirname(sys.path[0])))
-sys.path.append(
-    os.path.join(
-        os.path.dirname(os.path.dirname(sys.path[0])), versionName, "cnnmodels"
-    )
-)
-sys.path.append(
-    os.path.join(
-        os.path.dirname(os.path.dirname(sys.path[0])), versionName, "framework"
-    )
-)
-sys.path.append(
-    os.path.join(os.path.dirname(os.path.dirname(sys.path[0])), versionName)
-)
-
 from dataloader import ParallelDataLoader
 from model import LaneModel
 
-from training import TrainingFramework
+from app.code_torch.framework.training import TrainingFramework
 
 from PIL import Image
 import numpy as np
@@ -32,6 +17,11 @@ import shutil
 
 from datetime import datetime
 
+from pathlib import Path
+cwd = Path.cwd()
+path_training_split = cwd / "code_torch" / "split_all.json"
+path_dataset_dir = cwd.parent / "dataset_training" # cwd.parent / "msc_dataset" / "dataset_unpacked for new dataset
+
 DISABLE_TENSORFLOW_ALL = True  # global flag to disable tensorflow all
 SAVE_FIGURE_INTERVAL = 50  # save every XX steps
 
@@ -40,12 +30,13 @@ class Train(TrainingFramework):
     def __init__(self):
         self.image_size = 640
         self.batch_size = 4
-        self.datafolder = "./dataset_training"
+        self.datafolder = path_dataset_dir
         self.training_range = []
         self.use_sdmap = False
         self.backbone = "resnet34_torch"  #'resnet34_torch' 'resnet34v3' #sys.argv[1]
 
-        dataset_split = json.load(open(".\{}\split_all.json".format(versionName)))
+        with open(path_training_split, "r") as f:
+            dataset_split = json.load(f)
 
         for tid in dataset_split["training"]:
             for i in range(9):

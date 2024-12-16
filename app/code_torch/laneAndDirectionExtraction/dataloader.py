@@ -61,13 +61,13 @@ class Dataloader:
                 normal = scipy.ndimage.imread(self.folder + "/normal%s.jpg" % ind)
                 # sdmap = scipy.ndimage.imread(self.folder+"/sdmap%s.jpg" % ind)
             except:
-                import imageio
+                import imageio.v3 as imageio
 
-                sat_img = imageio.imread(self.folder + "/sat%s.jpg" % ind)
-                mask = imageio.imread(self.folder + "/regionmask%s.jpg" % ind)
-                target = imageio.imread(self.folder + "/lane%s.jpg" % ind)
+                sat_img = imageio.imread(self.folder / f"sat{ind}.jpg")
+                mask = imageio.imread(self.folder / f"regionmask{ind}.jpg")
+                target = imageio.imread(self.folder / f"lane{ind}.jpg")
                 # target_t = imageio.imread(self.folder+"/terminal%s.jpg" % ind)
-                normal = imageio.imread(self.folder + "/normal%s.jpg" % ind)
+                normal = imageio.imread(self.folder / f"normal{ind}.jpg")
                 # sdmap = mageio.imread(self.folder+"/sdmap%s.jpg" % ind)
 
             # target_t = cv2.GaussianBlur(target_t, (5,5), 1.0)
