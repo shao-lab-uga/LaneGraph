@@ -1,9 +1,12 @@
-
+# Python cache, compiled files
+*.pyc
 **/__pycache__/*
-**/.vscode/*
 
+# IDE files
+**/.vscode/*
+**/.idea/*
+
+# Project specific files
 model_laneExtraction*/*
 validation_laneExtraction*/*
-
-
-LogTmp/*
+*/LogTmp/*
