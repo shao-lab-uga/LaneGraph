@@ -187,14 +187,21 @@ class LaneModel:
         return self.sess.run(ops, feed_dict=feed_dict)
 
     def infer(self, x_in, sdmap=None):
-        feed_dict = {self.input: x_in, self.is_training: False}
 
-        if self.hassdmap:
-            feed_dict[self.sdmap] = sdmap
+        if self.backbone == "resnet34_torch":
+            import torch
+            self.backboneModelTorch.eval()
+            with torch.no_grad():
+                x_in = x_in.to(self.device)
+                return self.backboneModelTorch.forward(x_in)
+        else:
+            feed_dict = {self.input: x_in, self.is_training: False}
+            if self.hassdmap:
+                feed_dict[self.sdmap] = sdmap
 
-        ops = [self.output]
+            ops = [self.output]
 
-        return self.sess.run(ops, feed_dict=feed_dict)
+            return self.sess.run(ops, feed_dict=feed_dict)
 
     def evaluate(self, x_in, x_mask, target):
         feed_dict = {

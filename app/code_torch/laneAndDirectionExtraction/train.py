@@ -3,7 +3,7 @@ import sys
 
 versionName = "code_torch"
 
-from dataloader import ParallelDataLoader
+from dataloader_msc import ParallelDataLoader
 from model import LaneModel
 
 from app.code_torch.framework.training import TrainingFramework
@@ -18,9 +18,12 @@ import shutil
 from datetime import datetime
 
 from pathlib import Path
+
 cwd = Path.cwd()
 path_training_split = cwd / "code_torch" / "split_all.json"
-path_dataset_dir = cwd.parent / "dataset_training" # cwd.parent / "msc_dataset" / "dataset_unpacked for new dataset
+path_dataset_dir = (
+    cwd.parent / "msc_dataset" / "dataset_unpacked"
+)  # cwd.parent / "msc_dataset" / "dataset_unpacked for new dataset
 
 DISABLE_TENSORFLOW_ALL = True  # global flag to disable tensorflow all
 SAVE_FIGURE_INTERVAL = 50  # save every XX steps
@@ -39,8 +42,8 @@ class Train(TrainingFramework):
             dataset_split = json.load(f)
 
         for tid in dataset_split["training"]:
-            for i in range(9):
-                self.training_range.append("_%d" % (tid * 9 + i))
+            # for i in range(9):
+            self.training_range.append("_%d" % (tid))  # changed for whole pics
 
         self.instance = "_laneExtraction_run1_640_%s_500ep" % self.backbone
         if self.use_sdmap:
@@ -66,10 +69,10 @@ class Train(TrainingFramework):
         self.counter = 0
         self.disloss = 0
 
-        self.epochsize = (
+        self.epochsize = int(
             len(self.training_range)
-            * 2048
-            * 2048
+            * 4096
+            * 4096
             / (self.batch_size * self.image_size * self.image_size)
         )
 
@@ -77,7 +80,10 @@ class Train(TrainingFramework):
 
     def createDataloader(self, mode):
         self.dataloader = ParallelDataLoader(
-            self.datafolder, self.training_range, image_size=self.image_size
+            self.datafolder,
+            self.training_range,
+            image_size=self.image_size,
+            batch_size=self.batch_size,
         )
         self.dataloader.preload()
         return self.dataloader
@@ -93,7 +99,7 @@ class Train(TrainingFramework):
         return self.model
 
     def getBatch(self, dataloader):
-        return dataloader.getBatch(self.batch_size)
+        return dataloader.get_batch(self.batch_size)
 
     def train(self, batch, lr):
         self.counter += 1
@@ -125,6 +131,7 @@ class Train(TrainingFramework):
                     self.modelfolder, "model_epoch_%d" % (step // (self.epochsize))
                 )
             )
+            print(f"Saved model at step {step}")
         return False
 
     def visualization(self, step, result=None, batch=None):
