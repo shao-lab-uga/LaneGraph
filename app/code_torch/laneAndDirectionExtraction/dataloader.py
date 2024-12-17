@@ -15,6 +15,7 @@ class Dataloader:
         indrange,
         image_size=640,
         datasetImageSize=2048,
+        batch_size=8,
         preload_tiles=4,
         testing=False,
     ):
