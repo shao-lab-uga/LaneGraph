@@ -1,7 +1,6 @@
 import torch
-import torchvision
 import torch.nn as nn
-import torch.nn.functional as F
+import torchvision
 
 
 class DecoderBlock(nn.Module):
@@ -25,9 +24,9 @@ class DecoderBlock(nn.Module):
         up_in_channels      : 64,       up_out_channels     : 64
         conv_in_channels    : 128,      conv_out_channels   : 64
         """
-        if up_in_channels == None:
+        if up_in_channels is None:
             up_in_channels = conv_in_channels
-        if up_out_channels == None:
+        if up_out_channels is None:
             up_out_channels = conv_out_channels
 
         self.up = nn.ConvTranspose2d(
@@ -62,12 +61,16 @@ class DecoderBlock(nn.Module):
 
 
 class UnetResnet34(nn.Module):
-    def __init__(self, num_classes=4):
+    def __init__(self, ch_in, ch_out):
         super().__init__()
-        resnet34 = torchvision.models.resnet34(pretrained=False)
+        resnet34 = torchvision.models.resnet34(weights=None)
         filters = [64, 128, 256, 512]
-
-        self.firstlayer = nn.Sequential(*list(resnet34.children())[:3])
+        self.firstlayer = nn.Sequential(
+            nn.Conv2d(ch_in, 64, kernel_size=7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        # self.firstlayer = nn.Sequential(*list(resnet34.children())[:3])
         self.maxpool = list(resnet34.children())[3]
         self.encoder1 = resnet34.layer1
         self.encoder2 = resnet34.layer2
@@ -104,11 +107,11 @@ class UnetResnet34(nn.Module):
             nn.ConvTranspose2d(
                 in_channels=filters[0], out_channels=filters[0], kernel_size=2, stride=2
             ),
-            nn.Conv2d(filters[0], num_classes, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(filters[0], ch_out, kernel_size=3, padding=1, bias=True),
         )
 
     def forward(self, x):
-        e1 = self.firstlayer(x)  # N,3,640,640->N,64,320,320
+        e1 = self.firstlayer(x)  # N,ch_in,640,640->N,64,320,320
         maxe1 = self.maxpool(e1)  # N,64,320,320->N,64,160,160
         e2 = self.encoder1(maxe1)  # N,64,160,160->N,64,160,160
         e3 = self.encoder2(e2)  # N,64,160,160->N,128,80,80
@@ -123,6 +126,27 @@ class UnetResnet34(nn.Module):
         d4 = self.decoder4(d3, e2)  # N,64,160,160
         d5 = self.decoder5(d4, e1)  # N,64,320,320
 
-        out = self.lastlayer(d5)  # N,num_classes=4,640,640
+        out = self.lastlayer(d5)  # N,ch_out,640,640
 
+        return out
+
+
+class LazyResnet18Classifier(nn.Module):
+    """
+    Qucikly made resnet18 classifier based on torchvision model.
+    Does not match Songtaohe version. Only changed to support dynamic chanels in and out.
+    """
+
+    def __init__(self, ch_in, ch_out):
+        super().__init__()
+        self.model = torchvision.models.resnet18(weights=None)
+        # changing first layer for ch_in
+        self.model.conv1 = nn.Conv2d(
+            ch_in, 64, kernel_size=7, stride=2, padding=3, bias=False
+        )
+        # changing last layer for ch_out
+        self.model.fc = nn.Linear(in_features=512, out_features=ch_out)
+
+    def forward(self, x):
+        out = self.model(x)
         return out

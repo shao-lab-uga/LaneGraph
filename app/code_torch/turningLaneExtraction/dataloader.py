@@ -1,13 +1,14 @@
-import numpy as np
-import threading
-import scipy.ndimage
-from time import time
-import random
-import cv2
 import json
 import math
+import random
+from pathlib import Path
+from typing import List
 
-global_lock = threading.Lock()
+import cv2
+import imageio.v3 as iio
+import numpy as np
+import scipy.ndimage
+from app.new_code_copy.framework.base_classes import DataLoader
 
 
 def rotate(pos, angle, size):
@@ -20,37 +21,48 @@ def rotate(pos, angle, size):
     return (int(new_x + int(size / 2)), int(new_y + int(size / 2)))
 
 
-class Dataloader:
+class TurnExDataloader(DataLoader):
     def __init__(
         self,
-        folder,
-        indrange,
+        dataset_folder: Path,
+        training_range: List[str],
+        batch_size: int = 4,
+        preload_size: int = 4,
         image_size=640,
-        datasetImageSize=2048,
-        preload_tiles=4,
+        dataset_image_size=4096,
         testing=False,
     ):
-        self.folder = folder
-        self.indrange = indrange
+        super().__init__(batch_size=batch_size, preload_size=preload_size)
+        self.dataset_folder = dataset_folder
+        self.training_range = training_range
         self.image_size = image_size
-        self.datasetImageSize = datasetImageSize
-        self.preload_tiles = preload_tiles
-        self.images = np.zeros((preload_tiles, datasetImageSize, datasetImageSize, 3))
-        self.normal = np.zeros((preload_tiles, datasetImageSize, datasetImageSize, 2))
-        self.targets = np.zeros((preload_tiles, datasetImageSize, datasetImageSize, 1))
-        self.targets_t = np.zeros(
-            (preload_tiles, datasetImageSize, datasetImageSize, 1)
+        self.dataset_image_size = dataset_image_size
+        self.testing = testing
+
+        self.images = np.zeros(
+            (self.preload_size, dataset_image_size, dataset_image_size, 3)
         )
-        self.masks = np.ones((preload_tiles, datasetImageSize, datasetImageSize, 1))
+        self.normal = np.zeros(
+            (self.preload_size, dataset_image_size, dataset_image_size, 2)
+        )
+        self.targets = np.zeros(
+            (self.preload_size, dataset_image_size, dataset_image_size, 1)
+        )
+        self.targets_t = np.zeros(
+            (self.preload_size, dataset_image_size, dataset_image_size, 1)
+        )
+        self.masks = np.ones(
+            (self.preload_size, dataset_image_size, dataset_image_size, 1)
+        )
         self.links = []
-        self.maxbatchsize = 128
-        self.image_batch = np.zeros((self.maxbatchsize, image_size, image_size, 3))
-        self.normal_batch = np.zeros((self.maxbatchsize, image_size, image_size, 2))
-        self.target_batch = np.zeros((self.maxbatchsize, image_size, image_size, 1))
-        self.target_t_batch = np.zeros((self.maxbatchsize, image_size, image_size, 1))
-        self.connector_batch = np.zeros((self.maxbatchsize, image_size, image_size, 7))
-        self.target_label_batch = np.zeros((self.maxbatchsize, 1))
-        self.mask_batch = np.zeros((self.maxbatchsize, image_size, image_size, 1))
+
+        self.image_batch = np.zeros((self.batch_size, image_size, image_size, 3))
+        self.normal_batch = np.zeros((self.batch_size, image_size, image_size, 2))
+        self.target_batch = np.zeros((self.batch_size, image_size, image_size, 1))
+        self.target_t_batch = np.zeros((self.batch_size, image_size, image_size, 1))
+        self.connector_batch = np.zeros((self.batch_size, image_size, image_size, 7))
+        self.target_label_batch = np.zeros((self.batch_size, 1))
+        self.mask_batch = np.zeros((self.batch_size, image_size, image_size, 1))
 
         self.testing = testing
 
@@ -68,19 +80,19 @@ class Dataloader:
         # self.laneMaps = []
         # global_lock.release()
         self.links = []
-        for i in range(self.preload_tiles if ind is None else 1):
+        for i in range(self.preload_size if ind is None else 1):
             while True:
-                ind = random.choice(self.indrange)  # if ind is None else ind
-                links = json.load(open(self.folder + "/link%s.json" % ind))
-
+                ind = random.choice(self.training_range)  # if ind is None else ind
+                links = json.load(open(self.dataset_folder / f"link{ind}.json"))
                 if len(links[2]) == 0:
                     continue
 
-                sat_img = scipy.ndimage.imread(self.folder + "/sat%s.jpg" % ind)
-                mask = scipy.ndimage.imread(self.folder + "/regionmask%s.jpg" % ind)
-                target = scipy.ndimage.imread(self.folder + "/lane%s.jpg" % ind)
-                # target_t = scipy.ndimage.imread(self.folder+"/terminal%s.jpg" % ind)
-                normal = scipy.ndimage.imread(self.folder + "/normal%s.jpg" % ind)
+                # TODO Switch to cv2 for io, rotations
+                sat_img = iio.imread(self.dataset_folder / f"sat{ind}.jpg")
+                mask = iio.imread(self.dataset_folder / f"regionmask{ind}.jpg")
+                target = iio.imread(self.dataset_folder / f"lane{ind}.jpg")
+                # target_t = iio.imread(self.dataset_folder / f"terminal{ind}.jpg")
+                normal = iio.imread(self.dataset_folder / f"normal{ind}.jpg")
 
                 # target_t = cv2.GaussianBlur(target_t, (5,5), 1.0)
 
@@ -91,10 +103,10 @@ class Dataloader:
                     target = target[:, :, 0]
 
                 # if len(np.shape(target_t)) == 3:
-                # 	target_t = target_t[:,:,0]
+                # target_t = target_t[:,:,0]
 
                 angle = 0
-                if self.testing == False and random.randint(0, 5) < 4:
+                if self.testing is False and random.randint(0, 5) < 4:
                     angle = random.randint(0, 3) * 90 + random.randint(-30, 30)
                     # angle = 10
 
@@ -107,7 +119,7 @@ class Dataloader:
                     )
 
                     # rotate links
-                    nidmap, nodes, locallinks = links
+                    nidmap, nodes, locallinks, centers = links
                     # locallinks.append([newvertices, st, ed, st_nid, ed_nid])
                     # locallinks = links
                     newlocallinks = []
@@ -116,19 +128,19 @@ class Dataloader:
                         newlocallink = []
                         for k in range(len(locallink)):
                             pos = [locallink[k][0], locallink[k][1]]
-                            pos = rotate(pos, -angle, self.datasetImageSize)
+                            pos = rotate(pos, -angle, self.dataset_image_size)
                             if (
                                 pos[0] < 0
-                                or pos[0] > self.datasetImageSize
+                                or pos[0] > self.dataset_image_size
                                 or pos[1] < 0
-                                or pos[1] > self.datasetImageSize
+                                or pos[1] > self.dataset_image_size
                             ):
                                 oor = True
                                 break
 
                             newlocallink.append(pos)
 
-                        if oor == False:
+                        if oor is False:
                             newlocallinks.append(newlocallink)
 
                     if len(newlocallinks) == 0:
@@ -139,12 +151,12 @@ class Dataloader:
                     new_nodes = {}
                     for k in nodes.keys():
                         pos = nodes[k]
-                        pos = rotate(pos, -angle, self.datasetImageSize)
+                        pos = rotate(pos, -angle, self.dataset_image_size)
                         if (
                             pos[0] < 0
-                            or pos[0] > self.datasetImageSize
+                            or pos[0] > self.dataset_image_size
                             or pos[1] < 0
-                            or pos[1] > self.datasetImageSize
+                            or pos[1] > self.dataset_image_size
                         ):
                             continue
                         new_nodes[k] = pos
@@ -154,7 +166,7 @@ class Dataloader:
 
                     links[1] = new_nodes
 
-                normal = (normal.astype(np.float) - 127) / 127.0
+                normal = (normal.astype(np.float32) - 127) / 127.0
                 normal = normal[:, :, 1:3]  # cv2 is BGR scipy and Image PIL are RGB
 
                 normal_x = normal[:, :, 1]
@@ -170,10 +182,10 @@ class Dataloader:
                 normal[:, :, 0] = new_normal_x
                 normal[:, :, 1] = new_normal_y
 
-                sat_img = sat_img.astype(np.float) / 255.0 - 0.5
-                mask = mask.astype(np.float) / 255.0
-                target = target.astype(np.float) / 255.0
-                # target_t = target_t.astype(np.float) / 255.0
+                sat_img = sat_img.astype(np.float32) / 255.0 - 0.5
+                mask = mask.astype(np.float32) / 255.0
+                target = target.astype(np.float32) / 255.0
+                # target_t = target_t.astype(np.float32) / 255.0
 
                 self.links.append(links)
 
@@ -184,7 +196,7 @@ class Dataloader:
                 self.normal[i, :, :, :] = normal
 
                 # augmentation on images
-                if self.testing == False:
+                if self.testing is False:
                     self.images[i, :, :, :] = self.images[i, :, :, :] * (
                         0.8 + 0.2 * random.random()
                     ) - (random.random() * 0.4 - 0.2)
@@ -204,9 +216,7 @@ class Dataloader:
 
                 break
 
-        self.getBatchInternal(self.maxbatchsize)
-
-    def getBatchInternal(self, batchsize):
+    def get_batch(self):
         # print("getting batch")
 
         img = np.zeros((self.image_size, self.image_size), dtype=np.uint8)
@@ -214,10 +224,10 @@ class Dataloader:
         connector2 = np.zeros((self.image_size, self.image_size), dtype=np.uint8)
         connectorlink = np.zeros((self.image_size, self.image_size), dtype=np.uint8)
 
-        for i in range(batchsize):
+        for i in range(self.batch_size):
             while True:
-                tile_id = random.randint(0, self.preload_tiles - 1)
-                nidmap, nodes, locallinks = self.links[tile_id]
+                tile_id = random.randint(0, self.preload_size - 1)
+                nidmap, nodes, locallinks, centers = self.links[tile_id]
                 if len(locallinks) == 0:
                     continue
 
@@ -244,13 +254,13 @@ class Dataloader:
 
                     if sr < 0:
                         sr = 0
-                    if sr + self.image_size >= self.datasetImageSize:
-                        sr = self.datasetImageSize - self.image_size
+                    if sr + self.image_size >= self.dataset_image_size:
+                        sr = self.dataset_image_size - self.image_size
 
                     if sc < 0:
                         sc = 0
-                    if sc + self.image_size >= self.datasetImageSize:
-                        sc = self.datasetImageSize - self.image_size
+                    if sc + self.image_size >= self.dataset_image_size:
+                        sc = self.dataset_image_size - self.image_size
 
                     img = img * 0
                     # connector = connector * 0
@@ -366,13 +376,13 @@ class Dataloader:
 
                     if sr < 0:
                         sr = 0
-                    if sr + self.image_size >= self.datasetImageSize:
-                        sr = self.datasetImageSize - self.image_size
+                    if sr + self.image_size >= self.dataset_image_size:
+                        sr = self.dataset_image_size - self.image_size
 
                     if sc < 0:
                         sc = 0
-                    if sc + self.image_size >= self.datasetImageSize:
-                        sc = self.datasetImageSize - self.image_size
+                    if sc + self.image_size >= self.dataset_image_size:
+                        sc = self.dataset_image_size - self.image_size
 
                     img = img * 0
                     connector1 = connector1 * 0
@@ -424,79 +434,9 @@ class Dataloader:
 
         # print("getting batch done")
         return (
-            self.image_batch[:batchsize, :, :, :],
-            self.connector_batch[:batchsize, :, :, :],
-            self.target_batch[:batchsize, :, :, :],
-            self.target_label_batch[:batchsize, :],
-            self.normal_batch[:batchsize, :, :, :],
+            self.image_batch[: self.batch_size, :, :, :],
+            self.connector_batch[: self.batch_size, :, :, :],
+            self.target_batch[: self.batch_size, :, :, :],
+            self.target_label_batch[: self.batch_size, :],
+            self.normal_batch[: self.batch_size, :, :, :],
         )
-
-    def getBatch(self, batchsize):
-        st = random.randint(0, self.maxbatchsize - batchsize - 1)
-
-        return (
-            self.image_batch[st : st + batchsize, :, :, :],
-            self.connector_batch[st : st + batchsize, :, :, :],
-            self.target_batch[st : st + batchsize, :, :, :],
-            self.target_label_batch[st : st + batchsize, :],
-            self.normal_batch[st : st + batchsize, :, :, :],
-        )
-
-
-class ParallelDataLoader:
-    def __init__(self, *args, **kwargs):
-        self.n = 4
-        self.subloader = []
-        self.subloaderReadyEvent = []
-        self.subloaderWaitEvent = []
-
-        self.current_loader_id = 0
-
-        for i in range(self.n):
-            self.subloader.append(Dataloader(*args, **kwargs))
-            self.subloaderReadyEvent.append(threading.Event())
-            self.subloaderWaitEvent.append(threading.Event())
-
-        for i in range(self.n):
-            self.subloaderReadyEvent[i].clear()
-            self.subloaderWaitEvent[i].clear()
-        for i in range(self.n):
-            x = threading.Thread(target=self.daemon, args=(i,))
-            x.start()
-
-    def daemon(self, tid):
-        c = 0
-
-        while True:
-            #
-            t0 = time()
-            print("thread-%d starts preloading" % tid)
-            self.subloader[tid].preload(None)
-
-            self.subloaderReadyEvent[tid].set()
-
-            print("thread-%d finished preloading (time = %.2f)" % (tid, time() - t0))
-
-            self.subloaderWaitEvent[tid].wait()
-            self.subloaderWaitEvent[tid].clear()
-
-            if c == 0 and tid == 0:
-                self.subloaderWaitEvent[tid].wait()
-                self.subloaderWaitEvent[tid].clear()
-
-            c = c + 1
-
-    def preload(self):
-        # release the current one
-        self.subloaderWaitEvent[self.current_loader_id].set()
-
-        self.current_loader_id = (self.current_loader_id + 1) % self.n
-
-        self.subloaderReadyEvent[self.current_loader_id].wait()
-        self.subloaderReadyEvent[self.current_loader_id].clear()
-
-    def getBatch(self, batch_size):
-        return self.subloader[self.current_loader_id].getBatch(batch_size)
-
-    def current(self):
-        return self.subloader[self.current_loader_id]

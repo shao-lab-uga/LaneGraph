@@ -1,219 +1,127 @@
-import os
 import sys
-
-versionName = "code_torch"
-
-from dataloader_msc import ParallelDataLoader
-from model import LaneModel
-
-from app.code_torch.framework.training import TrainingFramework
-
-from PIL import Image
-import numpy as np
-from subprocess import Popen
-import math
-import json
-import shutil
-
-from datetime import datetime
-
 from pathlib import Path
 
-cwd = Path.cwd()
-path_training_split = cwd / "code_torch" / "split_all.json"
-path_dataset_dir = (
-    cwd.parent / "msc_dataset" / "dataset_unpacked"
-)  # cwd.parent / "msc_dataset" / "dataset_unpacked for new dataset
-
-DISABLE_TENSORFLOW_ALL = True  # global flag to disable tensorflow all
-SAVE_FIGURE_INTERVAL = 50  # save every XX steps
+sys.path.append(str(Path(__file__).parents[3]))
 
 
-class Train(TrainingFramework):
-    def __init__(self):
-        self.image_size = 640
-        self.batch_size = 4
-        self.datafolder = path_dataset_dir
-        self.training_range = []
-        self.use_sdmap = False
-        self.backbone = "resnet34_torch"  #'resnet34_torch' 'resnet34v3' #sys.argv[1]
+import json
 
-        with open(path_training_split, "r") as f:
-            dataset_split = json.load(f)
+import cv2
+import numpy as np
+from app.code_torch.framework.base_classes import (
+    DataLoader,
+    ModelManager,
+    ParallelDataLoader,
+    Trainer,
+)
+from app.code_torch.laneAndDirectionExtraction.model_manager import LaneExModelManager
+from dataloader import CenteredLaneExDataLoader
 
-        for tid in dataset_split["training"]:
-            # for i in range(9):
-            self.training_range.append("_%d" % (tid))  # changed for whole pics
+dataset_path = Path(
+    "/home/lab/development/lab/modular/LaneGraph/msc_dataset/dataset_unpacked"
+)
 
-        self.instance = "_laneExtraction_run1_640_%s_500ep" % self.backbone
-        if self.use_sdmap:
-            self.instance += "_withsdmap"
+config = {
+    "tag": "testing laneex",
+    "data_config": {
+        "batch_size": 4,
+        "preload_size": 4,
+        "image_size": 640,
+        "dataset_image_size": 4096,
+        "testing": False,
+        "num_loaders": 2,
+        "dataloader": CenteredLaneExDataLoader,
+        "dataset_folder": dataset_path,
+    },
+    "learning_rate": 0.001,
+    "lr_decay": [0.1, 0.1],
+    "lr_decay_ep": [350, 450],
+    "ep_max": 500,
+    "step_init": 0,
+}
 
-        savePath = os.path.join(
-            os.getcwd(),
-            "LogTmp",
-            "{}".format(datetime.now().strftime("%Y_%m_%d_%H_%M_%S")),
-        )
-        os.makedirs(savePath, exist_ok=True)
 
-        self.modelfolder = savePath
-        self.validationfolder = savePath
+class LaneExTrainer(Trainer):
+    def __init__(
+        self, config: dict, dataloader: DataLoader, model_manager: ModelManager
+    ) -> None:
+        super().__init__(config, dataloader, model_manager)
 
-        # # remove all previous results
-        # if os.path.exists(self.validationfolder):
-        # 	shutil.rmtree(self.validationfolder)
+    def _visualize(self, epoch: int, step: int, batch: tuple, result: tuple):
+        # Arrays are RGB, cv2 does BGR
+        path = self.visualization_folder
+        image_size = batch[0].shape[1]  # Image will be square
+        batch_size = batch[0].shape[0]
+        direction_img = np.zeros((image_size, image_size, 3), dtype=np.float32)
 
-        # Popen("mkdir " + self.modelfolder, shell=True).wait()
-        # Popen("mkdir " + self.validationfolder, shell=True).wait()
-
-        self.counter = 0
-        self.disloss = 0
-
-        self.epochsize = int(
-            len(self.training_range)
-            * 4096
-            * 4096
-            / (self.batch_size * self.image_size * self.image_size)
-        )
-
-        pass
-
-    def createDataloader(self, mode):
-        self.dataloader = ParallelDataLoader(
-            self.datafolder,
-            self.training_range,
-            image_size=self.image_size,
-            batch_size=self.batch_size,
-        )
-        self.dataloader.preload()
-        return self.dataloader
-
-    def createModel(self, sess):
-        self.model = LaneModel(
-            sess,
-            self.image_size,
-            batchsize=self.batch_size,
-            sdmap=self.use_sdmap,
-            backbone=self.backbone,
-        )
-        return self.model
-
-    def getBatch(self, dataloader):
-        return dataloader.get_batch(self.batch_size)
-
-    def train(self, batch, lr):
-        self.counter += 1
-        ret = self.model.train(
-            batch[0], batch[1], batch[2], batch[3], lr, sdmap=batch[-1]
-        )
-
-        return ret
-
-    def preload(self, dataloader, step):
-        if step > 0 and step % 50 == 0:
-            dataloader.preload()
-
-    # placeholder methods
-    def getLoss(self, result):
-        if math.isnan(result[0]):
-            print("loss is nan ...")
-            exit()
-
-        return result[0]
-
-    def getProgress(self, step):
-        return step / float(self.epochsize)
-
-    def saveModel(self, step):
-        if step % (self.epochsize * 10) == 0:
-            self.model.saveModel(
-                os.path.join(
-                    self.modelfolder, "model_epoch_%d" % (step // (self.epochsize))
-                )
+        for i in range(batch_size):
+            id_str = f"{epoch}_{step}_{i}"
+            # Batch
+            cv2.imwrite(
+                str(path / f"{id_str}_input.jpg"),
+                ((batch[0][i, :, :, ::-1] + 0.5) * 255).astype(np.uint8),
             )
-            print(f"Saved model at step {step}")
-        return False
+            cv2.imwrite(
+                str(path / f"{id_str}_mask.jpg"),
+                (batch[1][i, :, :, 0] * 255).astype(np.uint8),
+            )
+            cv2.imwrite(
+                str(path / f"{id_str}_target.jpg"),
+                ((batch[2][i, :, :, 0]) * 255).astype(np.uint8),
+            )
 
-    def visualization(self, step, result=None, batch=None):
-        direction_img = np.zeros((self.image_size, self.image_size, 3))
+            direction_img[:, :, 0] = batch[3][i, :, :, 0] * 127 + 127
+            direction_img[:, :, 1] = batch[3][i, :, :, 1] * 127 + 127
+            direction_img[:, :, 2] = 127
 
-        if step % SAVE_FIGURE_INTERVAL == 0:
-            # ind = ((step // 100) * self.batch_size) % 128
-            ind = (step // SAVE_FIGURE_INTERVAL) * self.batch_size
+            cv2.imwrite(
+                str(path / f"{id_str}_target_dir.jpg"),
+                direction_img.astype(np.uint8),
+            )
 
-            # batch[3] = np.clip(batch[3], -1, 1)
-            # result[1] = np.clip(result[1], -1, 1)
-
-            for i in range(self.batch_size):
-                idStr = "_{}_{}_{}".format(
-                    int(step // (self.epochsize)), step, i
-                )  # convention: epoch, step, index of figure
-
-                Image.fromarray(
-                    ((batch[0][i, :, :, :] + 0.5) * 255).astype(np.uint8)
-                ).save(os.path.join(self.validationfolder, "input{}.jpg".format(idStr)))
-                Image.fromarray(((batch[1][i, :, :, 0]) * 255).astype(np.uint8)).save(
-                    os.path.join(self.validationfolder, "mask{}.jpg".format(idStr))
-                )
-                Image.fromarray(((batch[2][i, :, :, 0]) * 255).astype(np.uint8)).save(
-                    os.path.join(self.validationfolder, "target{}.jpg".format(idStr))
-                )
-                if self.use_sdmap:
-                    Image.fromarray(
-                        ((batch[4][i, :, :, 0]) * 255).astype(np.uint8)
-                    ).save(
-                        os.path.join(self.validationfolder, "sdmap{}.jpg".format(idStr))
-                    )
-
-                direction_img[:, :, 2] = batch[3][i, :, :, 0] * 127 + 127
-                direction_img[:, :, 1] = batch[3][i, :, :, 1] * 127 + 127
-                direction_img[:, :, 0] = 127
-
-                Image.fromarray(direction_img.astype(np.uint8)).save(
-                    os.path.join(
-                        self.validationfolder, "targe_direction{}.jpg".format(idStr)
-                    )
+            if len(batch) == 5:
+                cv2.imwrite(
+                    str(path / f"{id_str}_sdmap.jpg"),
+                    (batch[4][i, :, :, 0] * 255).astype(np.uint8),
                 )
 
-                Image.fromarray(((result[1][i, :, :, 0]) * 255).astype(np.uint8)).save(
-                    os.path.join(self.validationfolder, "output{}.jpg".format(idStr))
-                )
+            # Results
+            cv2.imwrite(
+                str(path / f"{id_str}_output.jpg"),
+                (result[1][i, :, :, 0] * 255).astype(np.uint8),
+            )
 
-                direction_img[:, :, 2] = (
-                    np.clip(result[1][i, :, :, 1], -1, 1) * 127 + 127
-                )
-                direction_img[:, :, 1] = (
-                    np.clip(result[1][i, :, :, 2], -1, 1) * 127 + 127
-                )
-                direction_img[:, :, 0] = 127
+            direction_img[:, :, 0] = np.clip(result[1][i, :, :, 1], -1, 1) * 127 + 127
+            direction_img[:, :, 1] = np.clip(result[1][i, :, :, 2], -1, 1) * 127 + 127
+            direction_img[:, :, 2] = 127
 
-                Image.fromarray(direction_img.astype(np.uint8)).save(
-                    os.path.join(
-                        self.validationfolder, "output_direction{}.jpg".format(idStr)
-                    )
-                )
-
-        return False
+            cv2.imwrite(
+                str(path / f"{id_str}_output_dir.jpg"),
+                direction_img.astype(np.uint8),
+            )
+        return
 
 
-if __name__ == "__main__":
-    trainer = Train()
-    epochsisze = trainer.epochsize
+split_file = "/home/lab/development/lab/modular/LaneGraph/app/code_torch/split_all.json"
+training_range = []
 
-    config = {}
-    config["learningrate"] = 0.001
-    config["lr_decay"] = [0.1, 0.1]
-    config["lr_decay_step"] = [epochsisze * 350, epochsisze * 450]
-    config["step_init"] = 0
-    config["step_max"] = epochsisze * 500 + 1
-    config["use_validation"] = False
-    config["logfile"] = os.path.join(
-        trainer.validationfolder, "log_lane_%s.json" % trainer.instance
-    )
-    config["model_name"] = trainer.backbone
 
-    config["disable_tensorflow_all"] = DISABLE_TENSORFLOW_ALL
+with open(split_file, "r") as json_file:
+    dataset_split = json.load(json_file)
+for tid in dataset_split["training"]:
+    training_range.append(f"_{tid}")
 
-    trainer.run(config)
 
-    pass
+dataloader = ParallelDataLoader(
+    2,
+    2,
+    4,
+    CenteredLaneExDataLoader,
+    training_range=training_range,
+    dataset_folder=dataset_path,
+)
+
+model_manager = LaneExModelManager(batch_size=4)
+
+trainer = LaneExTrainer(config, dataloader, model_manager)
+trainer.run()
