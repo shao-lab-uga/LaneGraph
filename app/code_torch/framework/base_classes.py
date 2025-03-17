@@ -2,32 +2,37 @@ import json
 import sys
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from time import time
-from typing import Tuple, Type, Union, List
-from dataclasses import dataclass, field
+from typing import List, Tuple, Type, Union
+
 import numpy as np
+
 
 @dataclass
 class Config:
     batch_size: int
     preload_size: int
     dataset_folder: Path
-    dataset_split_file: Path
-    image_size: int=640
-    dataset_image_size: int=4096
-    testing: bool=False
-    learning_rate: float=0.001
-    lr_decay: List[float]=field(default_factory=lambda: [0.1, 0.1])
-    lr_decay_ep: List[int]=field(default_factory=lambda: [350, 450])
-    ep_max: int=500
-    epoch_size: int=500 # change to lambda later
-    step_init: int=0
-    model_save_ep_int: int=10
-    viz_save_ep_int: int=1
-    tag: str=field(default_factory=lambda: input("Enter run tag: "))
-    training_range: List[str] = field(init=False)
+    dataset_split_file: Path  # Move to dataset folder?
+    image_size: int = 640
+    dataset_image_size: int = 4096
+
+    testing: bool = False
+
+    learning_rate: float = 0.001
+    lr_decay: List[float] = field(default_factory=lambda: [0.1, 0.1])
+    lr_decay_ep: List[int] = field(default_factory=lambda: [350, 450])
+    ep_max: int = 500
+    epoch_size: int = field(init=False)
+    step_init: int = 0
+    model_save_ep_int: int = 10
+    viz_save_ep_int: int = 1
+    tag: str = field(default_factory=lambda: input("Enter run tag: "))
+    model_folder: Path = field(init=False)
+    visualization_folder: Path = field(init=False)
 
     def __post_init__(self):
         self.training_range = []
@@ -35,7 +40,19 @@ class Config:
             dataset_split = json.load(json_file)
         for tid in dataset_split["training"]:
             self.training_range.append(f"_{tid}")
-    
+
+        self.epoch_size = (self.dataset_image_size**2 * len(self.training_range)) // (
+            self.batch_size * self.image_size**2
+        )  # Ratio of dataset pixels to batch pixes
+
+        # Setting up folder paths for model
+        current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.model_folder = (
+            Path(__file__).parents[3] / "models" / f"{current_datetime}_{self.tag}"
+        )
+        self.visualization_folder = self.model_folder / "visualization"
+        self.visualization_folder.mkdir(parents=True, exist_ok=True)
+
 
 class DataLoader(ABC):
     @abstractmethod
@@ -135,8 +152,8 @@ class ParallelDataLoader(DataLoader):
 
 class ModelManager(ABC):
     @abstractmethod
-    def __init__(self, batch_size: int) -> None:
-        self.batch_size = batch_size
+    def __init__(self, config: Config) -> None:
+        self.config = config
 
     @abstractmethod
     def train(self, batch: Tuple[np.ndarray, ...], lr: float) -> Tuple:
@@ -148,7 +165,7 @@ class ModelManager(ABC):
         pass
 
     @abstractmethod
-    def save_model(self, path: Path) -> None:
+    def save_model(self, ep: int) -> None:
         pass
 
     @abstractmethod
@@ -163,44 +180,17 @@ class Trainer(ABC):
         dataloader: DataLoader,
         model_manager: ModelManager,
     ) -> None:
-        default_config = {
-            "data_config": {
-                "batch_size": 4,
-                "preload_size": 4,
-                "image_size": 640,
-                "dataset_image_size": 4096,
-                "testing": False,
-                "dataset_folder": Path(
-                    "/home/lab/development/lab/modular/LaneGraph/msc_dataset/dataset_unpacked"
-                ),
-                "training_range": None,
-            },
-            "dataset_split_file": "/home/lab/development/lab/modular/LaneGraph/app/code_torch/split_all.json",
-            "step_init": 0,
-            "model_save_ep_int": 10,  # epochs
-            "image_save_int": 500,  # step
-        }
         self.config = config
-        self.tag = self.config.tag
-        self.epoch_size = self.config.epoch_size
-        self.logs = {}
-        self.training_range = self.config.training_range
-
         self.model_manager = model_manager
         self.dataloader = dataloader
 
-        cur_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.model_folder = (
-            Path(__file__).parents[3] / "models" / f"{cur_datetime}_{self.tag}"
-        ) # move to config?
-        self.visualization_folder = self.model_folder / "visualization"
-        self.visualization_folder.mkdir(parents=True, exist_ok=True)
+        self.logs = {}
 
     def run(self) -> None:
         lr = self.config.learning_rate
         lr_decay = self.config.lr_decay
-        lr_decay_step = [i * self.epoch_size for i in self.config.lr_decay_ep]
-        max_step = self.config.ep_max * self.epoch_size + 1
+        lr_decay_step = [i * self.config.epoch_size for i in self.config.lr_decay_ep]
+        max_step = self.config.ep_max * self.config.epoch_size + 1
         step = self.config.step_init
         last_step = -1
 
@@ -236,15 +226,14 @@ class Trainer(ABC):
 
             if np.isnan(result[0]):
                 raise ValueError("Loss is nan")
+            self._add_log(step, result)
             loss += result[0]
 
             if step % 10 == 0:
                 t_misc = t_other - t_preload - t_load - t_train
-                epoch = step / float(self.epoch_size)
+                epoch = step / float(self.config.epoch_size)
                 p = int((epoch - int(epoch)) * 50)
                 loss /= 10
-
-                self._add_log("loss", step, loss)
 
                 sys.stdout.write(
                     f"\rstep {step} epoch: {epoch:.2f}"
@@ -273,9 +262,8 @@ class Trainer(ABC):
                 loss = 0
                 last_epoch = epoch
             if epoch % self.config.model_save_ep_int == 0:
-                self.model_manager.save_model(self.model_folder / f"ep{epoch}.pth")
-                with open(self.model_folder / "logs.json", "w") as jsonfile:
-                    json.dump(self.logs, jsonfile, indent=4)
+                self.model_manager.save_model(int(epoch))
+                self._save_logs()
 
             if step % self.config.viz_save_ep_int == 0:
                 self._visualize(int(epoch), step, batch, result)
@@ -307,16 +295,23 @@ class Trainer(ABC):
         """
         pass
 
-    def _add_log(self, key: str, *args) -> None:
+    @abstractmethod
+    def _add_log(self, step: int, results: tuple) -> None:
         """
-        Adds a new log. Args are logged to the list indexed py their position.
+        Adds values to self.logs based on their keyword. Values will be appended to the
+        list of their keyword. If a list does not already exist for a keyword, a list
+        will be created.
 
-        :param key: Key to associate the log entry with.
-        :type key: str
-        :param args: Variable length arguments, where each is logged to its own list.
-        :type args: tuple
+        :param kwargs: Values to be logged at keyword
+        :type kwargs: dict
         """
-        if key not in self.logs:
-            self.logs[key] = [[] for _ in args]
-        for i, arg in enumerate(args):
-            self.logs[key][i].append(arg)
+        return
+
+    def _save_logs(self) -> None:
+        """
+        Save self.logs log dictionary to logs.json in model folder
+        """
+        save_path = self.config.model_folder / "logs.json"
+        with save_path.open("w", encoding="utf-8") as json_file:
+            json.dump(self.logs, json_file)
+        return

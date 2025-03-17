@@ -4,21 +4,21 @@ from typing import Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
-from app.code_torch.framework.base_classes import ModelManager
-from app.code_torch.framework.models import LazyResnet18Classifier, UnetResnet34
 from torch.optim.adam import Adam
+
+from app.code_torch.framework.base_classes import Config, ModelManager
+from app.code_torch.framework.models import LazyResnet18Classifier, UnetResnet34
 
 
 class TurnValModelManager(ModelManager):
-    def __init__(
-        self,
-        batch_size: int = 4,
-        net_name: str = "v1",
-        size: int = 640,
-    ) -> None:
-        super().__init__(batch_size)
-        self.net_name = net_name
-        self.position_code = np.ndarray((batch_size, 2, size, size), dtype=np.float32)
+    def __init__(self, config: Config) -> None:
+        super().__init__(config)
+
+        # Positional encodings for NNs
+        size = self.config.image_size
+        self.position_code = np.ndarray(
+            (config.batch_size, 2, size, size), dtype=np.float32
+        )
         for i in range(size):
             self.position_code[:, 0, i, :] = float(i) / size
             self.position_code[:, 0, :, i] = float(i) / size
@@ -27,6 +27,7 @@ class TurnValModelManager(ModelManager):
         self.seg_network = UnetResnet34(ch_in=10, ch_out=2).to(self.device)
         self.class_network = LazyResnet18Classifier(ch_in=13, ch_out=2).to(self.device)
 
+        # Parameters are joined to use one optimizer
         self.parameters = list(self.seg_network.parameters()) + list(
             self.class_network.parameters()
         )
@@ -64,7 +65,7 @@ class TurnValModelManager(ModelManager):
         loss = F.cross_entropy(output_label, target_label.argmax(dim=1))
         return loss
 
-    def train(self, batch: Tuple[np.ndarray, ...], lr):
+    def train(self, batch: Tuple[np.ndarray, ...], lr: float):
         # Moving channels index from 3 to 1
         batch = tuple(
             arr.transpose(0, 3, 1, 2) if len(arr.shape) == 4 else arr for arr in batch
@@ -120,6 +121,11 @@ class TurnValModelManager(ModelManager):
         lossCur = lossCur
         lossCur.backward()
 
+        torch.nn.utils.clip_grad_norm_(
+            list(self.seg_network.parameters()) + list(self.class_network.parameters()),
+            max_norm=1.0,
+        )
+
         self.optimizer.param_groups[0]["lr"] = lr
         self.optimizer.step()
         if np.isnan(lossCur.item()):
@@ -137,16 +143,20 @@ class TurnValModelManager(ModelManager):
     def infer(self, input):
         return np.zeros((1, 1))
 
-    def save_model(self, path: Path):
-        ep = path.stem
-        ext = path.suffix
-        torch.save(self.seg_network.state_dict(), path.with_name(f"{ep}_seg{ext}"))
-        torch.save(self.class_network.state_dict(), path.with_name(f"{ep}_class{ext}"))
+    def save_model(self, ep: int):
+        path = self.config.model_folder
+        torch.save(
+            {
+                "seg_network": self.seg_network.state_dict(),
+                "class_network": self.class_network.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+            },
+            path / f"TurnVal_ep_{ep}",
+        )
 
     def restore_model(self, path: Path):
-        ep = path.stem
-        ext = path.suffix
-        self.seg_network.load_state_dict(torch.load(path.with_name(f"{ep}_seg{ext}")))
-        self.class_network.load_state_dict(
-            torch.load(path.with_name(f"{ep}_class{ext}"))
-        )
+        checkpoint = torch.load(path)
+
+        self.seg_network.load_state_dict(checkpoint["seg_network"])
+        self.class_network.load_state_dict(checkpoint["class_network"])
+        return

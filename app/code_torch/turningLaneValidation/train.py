@@ -3,28 +3,42 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parents[3]))
 
-import json
 
 import cv2
 import numpy as np
 import torch
-from app.code_torch.framework import base_classes
-from app.code_torch.TurnVal.model_manager import TurnValModelManager
 from dataloader import TurnValDataloader
 
+from app.code_torch.framework import base_classes
+from app.code_torch.turningLaneValidation.model_manager import TurnValModelManager
+
 torch.autograd.set_detect_anomaly(True)
+
 
 class TurnValTrainer(base_classes.Trainer):
     def __init__(
         self,
-        config: dict,
+        config: base_classes.Config,
         dataloader: base_classes.DataLoader,
         model_manager: base_classes.ModelManager,
     ) -> None:
         super().__init__(config, dataloader, model_manager)
 
+    def _add_log(self, step: int, results: tuple) -> None:
+        logs = {
+            "loss": results[0],
+            "seg_loss": results[1],
+            "class_loss": results[2],
+        }
+        for key, value in logs.items():
+            if key in self.logs:
+                self.logs[key].append(value)
+            else:
+                self.logs[key] = [value]
+        return
+
     def _visualize(self, epoch: int, step: int, batch: tuple, result: tuple):
-        path = self.visualization_folder
+        path = self.config.visualization_folder
 
         image_size = batch[0].shape[1]
         batch_size = batch[0].shape[0]
@@ -85,11 +99,11 @@ class TurnValTrainer(base_classes.Trainer):
 
 
 dataset_path = Path(
-    "/Users/agraham/development/lab/dist/LaneGraph/msc_dataset/dataset_unpacked"
+    "/home/lab/development/lab/dist/LaneGraph/msc_dataset/dataset_unpacked"
 )
-split_file = Path("/Users/agraham/development/lab/dist/LaneGraph/app/code/split_all.json")
+split_file = Path("/home/lab/development/lab/dist/LaneGraph/app/code/split_all.json")
 
-config = base_classes.Config(1,1, dataset_path,split_file)
+config = base_classes.Config(1, 1, dataset_path, split_file)
 
 dataloader = base_classes.ParallelDataLoader(
     1,
@@ -100,7 +114,7 @@ dataloader = base_classes.ParallelDataLoader(
     dataset_folder=config.dataset_folder,
 )
 
-model_manager = TurnValModelManager(config.batch_size)
+model_manager = TurnValModelManager(config)
 
 trainer = TurnValTrainer(config, dataloader, model_manager)
 trainer.run()
