@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from dataloader import TurnValDataloader
 
-from app.code_torch.framework import base_classes
+from app.code_torch.framework import base_classes, utils
 from app.code_torch.turningLaneValidation.model_manager import TurnValModelManager
 
 torch.autograd.set_detect_anomaly(True)
@@ -98,10 +98,11 @@ class TurnValTrainer(base_classes.Trainer):
             )
 
 
-dataset_path = Path(
-    "/home/lab/development/lab/dist/LaneGraph/msc_dataset/dataset_unpacked"
-)
-split_file = Path("/home/lab/development/lab/dist/LaneGraph/app/code/split_all.json")
+root_dir = utils.get_git_report()
+
+dataset_path = root_dir / "msc_dataset" / "dataset_unpacked"
+
+split_file = root_dir / "app" / "code" / "split_all.json"
 
 config = base_classes.Config(1, 1, dataset_path, split_file)
 
