@@ -8,6 +8,7 @@ import cv2
 import imageio.v3 as iio
 import numpy as np
 import scipy.ndimage
+
 from app.code_torch.framework.base_classes import DataLoader
 
 
@@ -100,8 +101,8 @@ class TurnValDataloader(DataLoader):
             while True:
                 ind = random.choice(self.training_range)  # if ind is None else ind
                 links = json.load(open(self.dataset_folder / f"link{ind}.json"))
-                for print_link in links:
-                    print(print_link)
+                # for print_link in links:
+                #    print(print_link)
                 if len(links[2]) == 0:
                     continue
 
@@ -206,16 +207,16 @@ class TurnValDataloader(DataLoader):
 
                 for j in range(len(links[2])):
                     if (links[2][j][0][0], links[2][j][0][1]) not in pos2nid:
-                        print(j, 1, (links[2][j][0][0], links[2][j][0][1]))
+                        # print(j, 1, (links[2][j][0][0], links[2][j][0][1]))
                         # print(pos2nid.keys())
-                        print("SkippingP0")
+                        # print("SkippingP0")
                         continue
                         # exit()
 
                     if (links[2][j][-1][0], links[2][j][-1][1]) not in pos2nid:
-                        print(j, 2, (links[2][j][0][0], links[2][j][0][1]))
+                        # print(j, 2, (links[2][j][0][0], links[2][j][0][1]))
                         # print(pos2nid.keys())
-                        print("SkippingP1")
+                        # print("SkippingP1")
                         continue
                         # exit()
 
