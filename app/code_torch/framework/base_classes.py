@@ -28,8 +28,8 @@ class Config:
     ep_max: int = 500
     epoch_size: int = field(init=False)
     step_init: int = 0
-    model_save_ep_int: int = 10
-    viz_save_ep_int: int = 1
+    model_save_ep_int: int = 50
+    viz_save_ep_int: int = 10
     tag: str = field(default_factory=lambda: input("Enter run tag: "))
     model_folder: Path = field(init=False)
     visualization_folder: Path = field(init=False)
@@ -261,11 +261,11 @@ class Trainer(ABC):
 
                 loss = 0
                 last_epoch = epoch
-            if epoch % self.config.model_save_ep_int == 0:
+            if step % (self.config.epoch_size * self.config.model_save_ep_int) == 0:
                 self.model_manager.save_model(int(epoch))
                 self._save_logs()
 
-            if step % self.config.viz_save_ep_int == 0:
+            if step % (self.config.epoch_size * self.config.viz_save_ep_int) == 0:
                 self._visualize(int(epoch), step, batch, result)
 
             # Updating learning rate for next loop
