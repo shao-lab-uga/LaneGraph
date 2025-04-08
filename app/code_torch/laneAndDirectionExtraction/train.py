@@ -120,8 +120,10 @@ split_file = root_dir / "app" / "code" / "split_all.json"
 config = base_classes.Config(4, 4, dataset_path, split_file)
 
 config.epoch_size = int(
-    (len(config.training_range) * 2048 * 2048) / (config.batch_size * 640 * 640)
+    (len(config.training_range) * 9 * 2048 * 2048) / (config.batch_size * 640 * 640)
 )
+print(config.epoch_size)
+exit()
 
 dataloader = base_classes.ParallelDataLoader(
     config.batch_size,
