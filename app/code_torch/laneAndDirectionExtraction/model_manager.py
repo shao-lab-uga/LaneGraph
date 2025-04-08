@@ -1,23 +1,17 @@
 from pathlib import Path
 
-import numpy as np
 import torch
-from app.new_code_copy.framework.base_classes import ModelManager
-from app.new_code_copy.framework.models import UnetResnet34
 from torch.optim.adam import Adam
+
+from app.code_torch.framework.base_classes import Config, ModelManager
+from app.code_torch.framework.models import UnetResnet34
 
 
 class LaneExModelManager(ModelManager):
-    def __init__(
-        self, batch_size: int = 4, sdmap: bool = False, net_name: str = "resnet34_torch"
-    ):
-        super().__init__(batch_size)
-        self.net_name = net_name
-        self.hassdmap = sdmap
+    def __init__(self, config: Config):
+        super().__init__(config)
 
         ch_in = 3
-        if self.hassdmap:
-            ch_in = 4
         ch_out = 4
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -61,11 +55,8 @@ class LaneExModelManager(ModelManager):
         x_mask = batch[1]
         target = batch[2]
         target_normal = batch[3]
-        if self.hassdmap:
-            sdmap = batch[4]
-            input_im = np.concatenate((x_in, sdmap), axis=1)
-        else:
-            input_im = x_in
+
+        input_im = x_in
         input_im = torch.tensor(input_im, dtype=torch.float32, device=self.device)
         x_mask = torch.tensor(x_mask, dtype=torch.float32, device=self.device)
         target = torch.tensor(target, dtype=torch.float32, device=self.device)
@@ -94,15 +85,24 @@ class LaneExModelManager(ModelManager):
 
     def infer(self, input):
         # TODO Check, prob doesnt work anymore
-        x_in = 1
+        x_in = input
         self.network.eval()
         with torch.no_grad():
             x_in = torch.permute(torch.FloatTensor(x_in), (0, 3, 1, 2)).to(self.device)
             result = self.network(x_in)
             return torch.permute(result, (0, 2, 3, 1)).detach().cpu().numpy()
 
-    def save_model(self, path: Path):
-        torch.save(self.network.state_dict(), path)
+    def save_model(self, ep: int):
+        path = self.config.model_folder
+        torch.save(
+            {
+                "network": self.network.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+            },
+            path / f"TurnVal_ep_{ep}",
+        )
 
     def restore_model(self, path: Path):
-        self.network.load_state_dict(torch.load(path))
+        checkpoint = torch.load(path)
+
+        self.network.load_state_dict(checkpoint["network"])

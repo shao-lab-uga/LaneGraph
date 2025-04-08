@@ -4,18 +4,12 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parents[3]))
 
 
-import json
-
 import cv2
 import numpy as np
-from app.code_torch.framework.base_classes import (
-    DataLoader,
-    ModelManager,
-    ParallelDataLoader,
-    Trainer,
-)
-from app.code_torch.laneAndDirectionExtraction.model_manager import LaneExModelManager
 from dataloader import CenteredLaneExDataLoader
+
+from app.code_torch.framework import base_classes, utils
+from app.code_torch.laneAndDirectionExtraction.model_manager import LaneExModelManager
 
 dataset_path = Path(
     "/home/lab/development/lab/modular/LaneGraph/msc_dataset/dataset_unpacked"
@@ -41,15 +35,30 @@ config = {
 }
 
 
-class LaneExTrainer(Trainer):
+class LaneExTrainer(base_classes.Trainer):
     def __init__(
-        self, config: dict, dataloader: DataLoader, model_manager: ModelManager
+        self,
+        config: base_classes.Config,
+        dataloader: base_classes.DataLoader,
+        model_manager: base_classes.ModelManager,
     ) -> None:
         super().__init__(config, dataloader, model_manager)
 
+    def _add_log(self, step: int, results: tuple) -> None:
+        logs = {
+            "loss": results[0],
+        }
+        for key, value in logs.items():
+            if key in self.logs:
+                self.logs[key].append(value)
+            else:
+                self.logs[key] = [value]
+        return
+
     def _visualize(self, epoch: int, step: int, batch: tuple, result: tuple):
         # Arrays are RGB, cv2 does BGR
-        path = self.visualization_folder
+        path = self.config.visualization_folder
+
         image_size = batch[0].shape[1]  # Image will be square
         batch_size = batch[0].shape[0]
         direction_img = np.zeros((image_size, image_size, 3), dtype=np.float32)
@@ -102,26 +111,28 @@ class LaneExTrainer(Trainer):
         return
 
 
-split_file = "/home/lab/development/lab/modular/LaneGraph/app/code_torch/split_all.json"
-training_range = []
+root_dir = utils.get_git_report()
 
+dataset_path = root_dir / "msc_dataset" / "dataset_unpacked"
 
-with open(split_file, "r") as json_file:
-    dataset_split = json.load(json_file)
-for tid in dataset_split["training"]:
-    training_range.append(f"_{tid}")
+split_file = root_dir / "app" / "code" / "split_all.json"
 
+config = base_classes.Config(4, 4, dataset_path, split_file)
 
-dataloader = ParallelDataLoader(
-    2,
-    2,
-    4,
-    CenteredLaneExDataLoader,
-    training_range=training_range,
-    dataset_folder=dataset_path,
+config.epoch_size = int(
+    (len(config.training_range) * 2048 * 2048) / (config.batch_size * 640 * 640)
 )
 
-model_manager = LaneExModelManager(batch_size=4)
+dataloader = base_classes.ParallelDataLoader(
+    config.batch_size,
+    config.preload_size,
+    4,
+    CenteredLaneExDataLoader,
+    training_range=config.training_range,
+    dataset_folder=config.dataset_folder,
+)
+
+model_manager = LaneExModelManager(config)
 
 trainer = LaneExTrainer(config, dataloader, model_manager)
 trainer.run()

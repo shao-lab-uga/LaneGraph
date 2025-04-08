@@ -7,7 +7,8 @@ from typing import List
 import imageio.v3 as imageio
 import numpy as np
 import scipy
-from app.new_code_copy.framework.base_classes import DataLoader
+
+from app.code_torch.framework.base_classes import DataLoader
 
 
 class CenteredLaneExDataLoader(DataLoader):
