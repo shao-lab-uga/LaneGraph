@@ -99,7 +99,7 @@ class LaneExModelManager(ModelManager):
                 "network": self.network.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
             },
-            path / f"TurnVal_ep_{ep}",
+            path / f"LaneEx_ep_{ep}",
         )
 
     def restore_model(self, path: Path):
