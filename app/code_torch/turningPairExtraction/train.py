@@ -10,7 +10,7 @@ import torch
 from dataloader import TurnValDataloader
 
 from app.code_torch.framework import base_classes, utils
-from app.code_torch.turningLaneValidation.model_manager import TurnValModelManager
+from app.code_torch.turningPairExtraction.model_manager import TurnValModelManager
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -27,8 +27,6 @@ class TurnValTrainer(base_classes.Trainer):
     def _add_log(self, step: int, results: tuple) -> None:
         logs = {
             "loss": results[0],
-            "seg_loss": results[1],
-            "class_loss": results[2],
         }
         for key, value in logs.items():
             if key in self.logs:
@@ -74,14 +72,14 @@ class TurnValTrainer(base_classes.Trainer):
             # sw ind
             cv2.imwrite(
                 str(path / f"{id_str}_output1.jpg"),
-                ((result[3][i, 0, :, :]) * 255).astype(np.uint8),
+                ((result[1][i, 0, :, :]) * 255).astype(np.uint8),
             )
             cv2.imwrite(
                 str(path / f"{id_str}_output2.jpg"),
-                ((result[3][i, 1, :, :]) * 255).astype(np.uint8),
+                ((result[1][i, 1, :, :]) * 255).astype(np.uint8),
             )
             with open(path / f"{id_str}_label.txt", "w") as txt_file:
-                txt_file.write(f"{batch[3][i, 0]} {result[4][i, 0]} \n")
+                txt_file.write(f"{batch[3][i, 0]} \n")
 
             direction_image[:, :, 2] = np.clip(batch[4][i, :, :, 0], -1, 1) * 127 + 127
             direction_image[:, :, 1] = np.clip(batch[4][i, :, :, 1], -1, 1) * 127 + 127
