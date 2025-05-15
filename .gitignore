@@ -12,4 +12,8 @@ validation_laneExtraction*/*
 */LogTmp/*
 */dataset_unpacked*/**
 
+# MacOS Files
 **/.DS_Store
+
+# Pytorch Files
+*.pth
