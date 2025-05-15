@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.optim.adam import Adam
 
@@ -83,14 +84,19 @@ class LaneExModelManager(ModelManager):
         )
         return result
 
-    def infer(self, input):
+    def infer(self, input_im):
         # TODO Check, prob doesnt work anymore
-        x_in = input
+        x_in = np.expand_dims(input_im, axis=0) / 255.0 - 0.5
         self.network.eval()
         with torch.no_grad():
             x_in = torch.permute(torch.FloatTensor(x_in), (0, 3, 1, 2)).to(self.device)
-            result = self.network(x_in)
-            return torch.permute(result, (0, 2, 3, 1)).detach().cpu().numpy()
+            output_res = self.network(x_in)
+            output_seg = torch.softmax(output_res[:, 0:2, :, :], dim=1)[:, 0:1, :, :]
+            output_dir = output_res[:, 2:4, :, :]
+            output = torch.cat((output_seg, output_dir), dim=1)
+
+            result = torch.permute(output, (0, 2, 3, 1)).detach().cpu().numpy()
+            return result[0, :, :, :]
 
     def save_model(self, ep: int):
         path = self.config.model_folder

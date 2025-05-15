@@ -6,12 +6,12 @@ import torch
 import torch.nn.functional as F
 from torch.optim.adam import Adam
 
-from app.code_torch.framework.base_classes import Config, ModelManager
+from app.code_torch.framework.base_classes import ModelManager, SimpleConfig
 from app.code_torch.framework.models import UnetResnet34
 
 
 class TurnValModelManager(ModelManager):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: SimpleConfig) -> None:
         super().__init__(config)
 
         # Positional encodings for NNs
@@ -117,8 +117,14 @@ class TurnValModelManager(ModelManager):
             None,
         )
 
-    def infer(self, input):
-        return np.zeros((1, 1))
+    def infer(self, input_im):
+        input_arr = torch.tensor(input_im, dtype=torch.float32, device=self.device)
+        input_arr = torch.permute(input_arr, (0, 3, 2, 1))
+        self.network.eval()
+        with torch.no_grad():
+            res = self.network(input_arr)
+            out = F.softmax(res, dim=1)[0, 0:1, :, :]
+        return out.detach().cpu().numpy()
 
     def save_model(self, ep: int):
         path = self.config.model_folder
