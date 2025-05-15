@@ -12,11 +12,17 @@ import numpy as np
 
 
 @dataclass
-class Config:
+class SimpleConfig:
     batch_size: int
-    preload_size: int
-    dataset_folder: Path
-    dataset_split_file: Path  # Move to dataset folder?
+    image_size: int
+
+
+@dataclass
+class Config(SimpleConfig):
+    batch_size: int = 4
+    preload_size: int = 4
+    dataset_folder: Path = Path()
+    dataset_split_file: Path = Path()  # Move to dataset folder?
     image_size: int = 640
     dataset_image_size: int = 4096
 
@@ -152,7 +158,7 @@ class ParallelDataLoader(DataLoader):
 
 class ModelManager(ABC):
     @abstractmethod
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: SimpleConfig) -> None:
         self.config = config
 
     @abstractmethod
@@ -161,7 +167,7 @@ class ModelManager(ABC):
         pass
 
     @abstractmethod
-    def infer(self, input) -> np.ndarray:
+    def infer(self, input_im) -> np.ndarray:
         pass
 
     @abstractmethod
