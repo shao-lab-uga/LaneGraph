@@ -1,0 +1,142 @@
+paths:
+  raw_data: "./raw_data/"
+  auxiliary_data: "./auxiliary_data/"
+  processed_data: "./processed_data/"
+  checkpoints: "./checkpoints/"
+  logs: "./logs/"
+
+data_attributes:
+  sample_frequency: 25
+  start_position: 58.5
+  end_position: 63.5
+
+preprocessing:
+  spatial_stride: 70
+  spatial_window: 280
+  temporal_stride: 29
+  temporal_window: 116
+  agent_points:
+    per_side_length: 48
+    per_side_width: 16
+
+occupancy_flow_map:
+  grid_size:
+    x: 512
+    y: 96
+
+dataset_splits:
+  train_ratio: 0.8
+  validation_ratio: 0.1
+  test_ratio: 0.1
+
+dataloader_config:
+  num_workers: 8
+  batch_size: 4
+  shuffle: true
+  total_samples: 150000
+  
+task_config:
+  history_length: 20
+  num_his_points: 10
+  prediction_length: 96
+  num_waypoints: 12
+
+training_settings:
+  checkpoint_interval: 1
+  epochs: 30
+  optimizer:
+    learning_rate: 0.0001
+    weight_decay: 0.0001
+  scheduler:
+    step_size: 3
+    gamma: 0.5
+  loss_function:
+    type: "L2"
+    weight: 1.0
+
+model:
+  input_size: [256, 256]  
+  history_length: 10
+  transformer_depths: [2, 2, 2]
+  # Ouput channel: input // 2^depths[0] // 2^depths[1] // 2^depths[2]... e.g. 256 // 2^2 // 2^2 // 2^2 = 16
+  swin_transformer:
+    # Swin Transformer parameters
+    patch_size: [4, 4]
+    embed_dim: 96
+
+    window_size: 8
+    embedding_dimension: 96
+
+    attention_heads: [3, 6, 12]
+    mlp_ratio: 4. # hiden size ratio
+    drop_path_rate: 0.0
+    # Encoder Settings
+    use_flow: true
+    flow_sep: true
+    sep_encode: true
+
+    #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    no_map: false # not using the map
+
+
+    ape: true # Absolute Position Embedding
+    patch_norm: true
+    large_input: false
+    use_checkpoint: false
+
+    basic_layer:
+      qk_scale: None
+      qkv_bias: true
+      drop_rate: 0.0
+      attn_drop_rate: 0.0
+
+  # flow-guided multi-scale attention
+  fg_msa: true
+  FlowGuidedMultiHeadSelfAttention:
+  # input size should be the output size of the previous layer
+    query_size: [16,16]
+    key_value_size: [16,16]
+    num_attention_heads: 12
+    num_attention_head_channels: 32
+    num_groups: 12
+    input_dimension: 384
+    output_dimension: 384
+    attn_drop: 0.
+    proj_drop: 0.
+    stride: 1
+    offset_range_factor: 2
+    use_positional_encoding: True
+    dwc_pe: False
+    no_offset: False
+    fixed_positional_encoding: False
+    stage_idx: 3
+    use_last_ref: False
+    fg: true
+
+  TrajNetCrossAttention:
+    pic_size: [16, 16]
+    pic_dim : 384
+    sep_actors: false
+    TrajNet:
+      CrossAttention:
+        # key dimension * num heads should be the same as the input dimension
+          key_dimension: 128
+          num_heads: 3
+      no_attention: false
+      double_net: false
+      traj_heads: 4
+      att_heads: 6
+      out_dim: 384
+      node_feature_dim: 6
+      vector_feature_dim: 4
+
+  Pyramid3DDecoder:
+    pic_dim : 384
+    use_pyramid: True
+    timestep_split: True
+    shallow_decode: 1 # (4-len(cfg['depths'][:])),
+    flow_sep_decode: True
+    conv_cnn: False
+    stp_grad: False
+    rep_res: True
+    sep_conv: False
