@@ -269,11 +269,11 @@ for region in regions:
                             localnodes[nid] = [x, y]
 
                     json.dump(
-                        [[nidmap, localnodes, locallinks, find_centers(nidmap, localnodes, 200)]],
+                        [nidmap, localnodes, locallinks, find_centers(nidmap, localnodes, 200)],
                         open(outputfolder + "/link_%d.json" % (counter_out), "w"),
                         indent=2,
                     )
-
+                    
                     counter_out += 1
                     print(counter_out)
 

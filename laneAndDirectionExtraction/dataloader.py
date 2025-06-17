@@ -1,263 +1,394 @@
+import imageio.v3 as imageio
 import numpy as np
 import threading
-import scipy.ndimage
-from time import time
 import random
+import time
+import json
+import scipy
 import math
-
-global_lock = threading.Lock()
-
-
+import os
+from pathlib import Path
+import easydict
+from utils.config_utils import load_config
 class Dataloader:
     def __init__(
         self,
-        folder,
+        data_path,
         indrange,
         image_size=640,
-        datasetImageSize=2048,
+        dataset_image_size=2048,
         batch_size=8,
         preload_tiles=4,
-        testing=False,
+        training=True,
     ):
-        self.folder = folder
+        self.data_path = data_path
         self.indrange = indrange
         self.image_size = image_size
-        self.datasetImageSize = datasetImageSize
+        self.dataset_image_size = dataset_image_size
+        self.batch_size = batch_size
         self.preload_tiles = preload_tiles
-        self.images = np.zeros((preload_tiles, datasetImageSize, datasetImageSize, 3))
-        self.normal = np.zeros((preload_tiles, datasetImageSize, datasetImageSize, 2))
-        self.targets = np.zeros((preload_tiles, datasetImageSize, datasetImageSize, 1))
-        self.targets_t = np.zeros(
-            (preload_tiles, datasetImageSize, datasetImageSize, 1)
-        )
-        self.masks = np.ones((preload_tiles, datasetImageSize, datasetImageSize, 1))
-        self.sdmaps = np.ones((preload_tiles, datasetImageSize, datasetImageSize, 1))
+        self.training = training
+        
+        # Preload
+        self.images = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 3))
+        self.normal = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 2))
+        self.targets = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 1))
+        self.masks = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 1))
+        self.centers = [[] for _ in range(preload_tiles)]
+        
+        # Batch
+        self.image_batch = np.zeros((batch_size, image_size, image_size, 3))
+        self.normal_batch = np.zeros((batch_size, image_size, image_size, 2))
+        self.target_batch = np.zeros((batch_size, image_size, image_size, 1))
+        self.mask_batch = np.zeros((batch_size, image_size, image_size, 1))
 
-        self.image_batch = np.zeros((8, image_size, image_size, 3))
-        self.normal_batch = np.zeros((8, image_size, image_size, 2))
-        self.target_batch = np.zeros((8, image_size, image_size, 1))
-        self.target_t_batch = np.zeros((8, image_size, image_size, 1))
-        self.sdmap_batch = np.zeros((8, image_size, image_size, 1))
+    def _load_image_data(self, ind):
+        """Load all image data for a given index."""
+        sat_img = imageio.imread(os.path.join(self.data_path, f"sat_{ind}.jpg"))
+        mask = imageio.imread(os.path.join(self.data_path, f"regionmask_{ind}.jpg"))
+        target = imageio.imread(os.path.join(self.data_path, f"lane_{ind}.jpg"))
+        normal = imageio.imread(os.path.join(self.data_path, f"normal_{ind}.jpg"))
+        
+        with open(os.path.join(self.data_path, f"link_{ind}.json"), "r") as json_file:
+            nidmap, localnodes, locallinks, centers = json.load(json_file)
+            
+        return sat_img, mask, target, normal, centers
 
-        self.mask_batch = np.zeros((8, image_size, image_size, 1))
+    def _convert_to_grayscale(self, image):
+        """Convert image to grayscale if needed."""
+        return image[:, :, 0] if len(image.shape) == 3 else image
 
-        self.testing = testing
+    def _apply_rotation(self, sat_img, mask, target, normal, angle):
+        """Apply rotation to all images."""
+        sat_img = scipy.ndimage.rotate(sat_img, angle, reshape=False)
+        mask = scipy.ndimage.rotate(mask, angle, reshape=False)
+        target = scipy.ndimage.rotate(target, angle, reshape=False)
+        normal = scipy.ndimage.rotate(normal, angle, reshape=False, cval=127)
+        return sat_img, mask, target, normal
+
+    def _rotate_centers(self, centers, angle):
+        """Rotate center coordinates and filter valid ones."""
+        im_center = np.array([self.dataset_image_size, self.dataset_image_size]) // 2
+        angle_rad = np.radians(-angle)
+        margin = 200
+        
+        rot_centers = []
+        for x, y in centers:
+            x_rot = round((x - im_center[0]) * np.cos(angle_rad) - (y - im_center[1]) * np.sin(angle_rad) + im_center[0])
+            y_rot = round((x - im_center[0]) * np.sin(angle_rad) + (y - im_center[1]) * np.cos(angle_rad) + im_center[1])
+            
+            if (margin <= x_rot < self.dataset_image_size - margin and 
+                margin <= y_rot < self.dataset_image_size - margin):
+                rot_centers.append((x_rot, y_rot))
+                
+        return rot_centers
+
+    def _process_normal_map(self, normal, angle):
+        """Process normal map with rotation compensation."""
+        normal = (normal.astype(float) - 127) / 127.0
+        normal = normal[:, :, 1:3]
+        
+        normal_x, normal_y = normal[:, :, 1], normal[:, :, 0]
+        angle_rad = math.radians(-angle)
+        
+        new_normal_x = normal_x * math.cos(angle_rad) - normal_y * math.sin(angle_rad)
+        new_normal_y = normal_x * math.sin(angle_rad) + normal_y * math.cos(angle_rad)
+        
+        normal[:, :, 0] = new_normal_x
+        normal[:, :, 1] = new_normal_y
+        return np.clip(normal, -0.9999, 0.9999)
+
+    def _apply_augmentation(self, images, tile_idx):
+        """Apply color augmentation to images."""
+        if not self.training:
+            return
+            
+        # Global brightness and contrast
+        brightness_factor = 0.8 + 0.2 * random.random()
+        brightness_offset = random.random() * 0.4 - 0.2
+        self.images[tile_idx] = self.images[tile_idx] * brightness_factor - brightness_offset
+        self.images[tile_idx] = np.clip(self.images[tile_idx], -0.5, 0.5)
+        
+        # Per-channel color adjustment
+        for c in range(3):
+            color_factor = 0.8 + 0.2 * random.random()
+            self.images[tile_idx, :, :, c] *= color_factor
 
     def preload(self, ind=None):
-        # global global_lock
-
-        # global_lock.acquire()
-        # for laneMap in self.laneMaps:
-        # 	laneMap.save(self.fgt_folder)
-        # self.laneMaps = []
-        # global_lock.release()
-
-        for i in range(self.preload_tiles if ind is None else 1):
-            ind = random.choice(self.indrange) if ind is None else ind
-            try:
-                sat_img = scipy.ndimage.imread(self.folder + "/sat%s.jpg" % ind)
-                mask = scipy.ndimage.imread(self.folder + "/regionmask%s.jpg" % ind)
-                target = scipy.ndimage.imread(self.folder + "/lane%s.jpg" % ind)
-                # target_t = scipy.ndimage.imread(self.folder+"/terminal%s.jpg" % ind)
-                normal = scipy.ndimage.imread(self.folder + "/normal%s.jpg" % ind)
-                # sdmap = scipy.ndimage.imread(self.folder+"/sdmap%s.jpg" % ind)
-            except:
-                import imageio.v3 as imageio
-
-                sat_img = imageio.imread(self.folder / f"sat{ind}.jpg")
-                mask = imageio.imread(self.folder / f"regionmask{ind}.jpg")
-                target = imageio.imread(self.folder / f"lane{ind}.jpg")
-                # target_t = imageio.imread(self.folder+"/terminal%s.jpg" % ind)
-                normal = imageio.imread(self.folder / f"normal{ind}.jpg")
-                # sdmap = mageio.imread(self.folder+"/sdmap%s.jpg" % ind)
-
-            # target_t = cv2.GaussianBlur(target_t, (5,5), 1.0)
-
-            if len(np.shape(mask)) == 3:
-                mask = mask[:, :, 0]
-
-            if len(np.shape(target)) == 3:
-                target = target[:, :, 0]
-
-            # if len(np.shape(sdmap)) == 3:
-            # 	sdmap = sdmap[:,:,0]
-
-            # if len(np.shape(target_t)) == 3:
-            # 	target_t = target_t[:,:,0]
-
+        """Preload tiles with image data."""
+        for i in range(self.preload_tiles):
+            current_ind = random.choice(self.indrange) if ind is None else ind
+            
+            # Load raw data
+            sat_img, mask, target, normal, centers = self._load_image_data(current_ind)
+            
+            # Convert to grayscale if needed
+            mask = self._convert_to_grayscale(mask)
+            target = self._convert_to_grayscale(target)
+            
+            # Apply rotation
             angle = 0
-            if self.testing == False and random.randint(0, 5) < 4:
-                angle = random.randint(0, 3) * 90 + random.randint(-30, 30)
-                # angle = 10
-
-                sat_img = scipy.ndimage.rotate(sat_img, angle, reshape=False)
-                mask = scipy.ndimage.rotate(mask, angle, reshape=False)
-                target = scipy.ndimage.rotate(target, angle, reshape=False)
-                # sdmap = scipy.ndimage.rotate(sdmap, angle, reshape=False)
-                # target_t = scipy.ndimage.rotate(target_t, angle, reshape=False)
-                normal = scipy.ndimage.rotate(normal, angle, reshape=False, cval=127)
-
-            normal = (normal.astype(float) - 127) / 127.0
-            normal = normal[:, :, 1:3]  # cv2 is BGR scipy and Image PIL are RGB
-
-            normal_x = normal[:, :, 1]
-            normal_y = normal[:, :, 0]
-
-            new_normal_x = normal_x * math.cos(
-                math.radians(-angle)
-            ) - normal_y * math.sin(math.radians(-angle))
-            new_normal_y = normal_x * math.sin(
-                math.radians(-angle)
-            ) + normal_y * math.cos(math.radians(-angle))
-
-            normal[:, :, 0] = new_normal_x
-            normal[:, :, 1] = new_normal_y
-            normal = np.clip(normal, -0.9999, 0.9999)
-
-            sat_img = sat_img.astype(float) / 255.0 - 0.5
-            mask = mask.astype(float) / 255.0
-            target = target.astype(float) / 255.0
-            # sdmap = sdmap.astype(np.float) / 255.0
-            # target_t = target_t.astype(np.float) / 255.0
-
-            self.images[i, :, :, :] = sat_img
+            random_rotation_probability = 0.2
+            if self.training and random.random() < random_rotation_probability:  # 20% chance of rotation
+                angle = random.randint(0, 359)
+                sat_img, mask, target, normal = self._apply_rotation(sat_img, mask, target, normal, angle)
+            
+            # Process centers and normal map
+            self.centers[i] = self._rotate_centers(centers, angle)
+            normal = self._process_normal_map(normal, angle)
+            
+            # Normalize images
+            sat_img = sat_img.astype(np.float64) / 255.0 - 0.5
+            mask = mask.astype(np.float64) / 255.0
+            target = target.astype(np.float64) / 255.0
+            
+            # Store processed data
+            self.images[i] = sat_img
             self.masks[i, :, :, 0] = mask
             self.targets[i, :, :, 0] = target
-            # self.targets_t[i,:,:,0] = target_t
-            self.normal[i, :, :, :] = normal
-            # self.sdmaps[i,:,:,0] = sdmap
+            self.normal[i] = normal
+            
+            # Apply augmentation
+            self._apply_augmentation(self.images, i)
 
-            # augmentation on images
-            if self.testing == False:
-                self.images[i, :, :, :] = self.images[i, :, :, :] * (
-                    0.8 + 0.2 * random.random()
-                ) - (random.random() * 0.4 - 0.2)
-                self.images[i, :, :, :] = np.clip(self.images[i, :, :, :], -0.5, 0.5)
+    def _get_available_coordinates(self):
+        """Get all available coordinates from all tiles."""
+        available_coords = []
+        for tile_idx, centers in enumerate(self.centers):
+            for coord in centers:
+                available_coords.append((coord, tile_idx))
+        return available_coords
 
-                self.images[i, :, :, 0] = self.images[i, :, :, 0] * (
-                    0.8 + 0.2 * random.random()
-                )
-                self.images[i, :, :, 1] = self.images[i, :, :, 1] * (
-                    0.8 + 0.2 * random.random()
-                )
-                self.images[i, :, :, 2] = self.images[i, :, :, 2] * (
-                    0.8 + 0.2 * random.random()
-                )
+    def _is_valid_crop(self, x, y, tile_id):
+        """Check if crop location has sufficient lane and mask coverage."""
+        margin = 64
+        crop_targets = self.targets[tile_id, x+margin:x+self.image_size-margin, 
+                                   y+margin:y+self.image_size-margin, :]
+        crop_masks = self.masks[tile_id, x+margin:x+self.image_size-margin, 
+                               y+margin:y+self.image_size-margin, :]
+        
+        return np.sum(crop_targets) >= 100 and np.sum(crop_masks) >= 2500  # 50*50
 
-    def getBatch(self, batchsize):
-        for i in range(batchsize):
-            while True:
-                tile_id = random.randint(0, self.preload_tiles - 1)
-                x = random.randint(0, self.datasetImageSize - 1 - self.image_size)
-                y = random.randint(0, self.datasetImageSize - 1 - self.image_size)
-
-                if (
-                    np.sum(
-                        self.targets[
-                            tile_id,
-                            x + 64 : x + self.image_size - 64,
-                            y + 64 : y + self.image_size - 64,
-                            :,
-                        ]
-                    )
-                    < 100
-                ):
-                    continue
-
-                if (
-                    np.sum(
-                        self.masks[
-                            tile_id,
-                            x + 64 : x + self.image_size - 64,
-                            y + 64 : y + self.image_size - 64,
-                            :,
-                        ]
-                    )
-                    < 50 * 50
-                ):
-                    continue
-
-                self.image_batch[i, :, :, :] = self.images[
-                    tile_id, x : x + self.image_size, y : y + self.image_size, :
-                ]
-                self.mask_batch[i, :, :, :] = self.masks[
-                    tile_id, x : x + self.image_size, y : y + self.image_size, :
-                ]
-                self.target_batch[i, :, :, :] = self.targets[
-                    tile_id, x : x + self.image_size, y : y + self.image_size, :
-                ]
-                self.target_t_batch[i, :, :, :] = self.targets_t[
-                    tile_id, x : x + self.image_size, y : y + self.image_size, :
-                ]
-                self.normal_batch[i, :, :, :] = self.normal[
-                    tile_id, x : x + self.image_size, y : y + self.image_size, :
-                ]
-                # self.sdmap_batch[i,:,:,:] = self.sdmaps[tile_id, x:x+self.image_size, y:y+self.image_size,:]
-                break
-
+    def get_batch(self):
+        """Generate a batch of cropped images."""
+        # Clear batch arrays
+        for batch_array in [self.image_batch, self.mask_batch, self.target_batch, self.normal_batch]:
+            batch_array.fill(0)
+        
+        available_coords = self._get_available_coordinates()
+        if len(available_coords) < self.batch_size:
+            return None
+        
+        selected_coords = []
+        noise_range = 100
+        
+        while len(selected_coords) < self.batch_size:
+            if not available_coords:
+                return None
+            
+            # Select random coordinate
+            coord, tile_id = random.choice(available_coords)
+            available_coords.remove((coord, tile_id))
+            
+            # Add noise and clamp to valid range
+            x, y = coord
+            x += random.randint(-noise_range, noise_range) - (self.image_size // 2)
+            y += random.randint(-noise_range, noise_range) - (self.image_size // 2)
+            x = np.clip(x, 0, self.dataset_image_size - self.image_size - 1)
+            y = np.clip(y, 0, self.dataset_image_size - self.image_size - 1)
+            
+            # Validate crop
+            if self._is_valid_crop(x, y, tile_id):
+                selected_coords.append(((x, y), tile_id))
+        
+        # Create batch
+        for batch_idx, ((x, y), tile_id) in enumerate(selected_coords):
+            self.image_batch[batch_idx] = self.images[tile_id, y:y+self.image_size, x:x+self.image_size]
+            self.mask_batch[batch_idx] = self.masks[tile_id, y:y+self.image_size, x:x+self.image_size]
+            self.target_batch[batch_idx] = self.targets[tile_id, y:y+self.image_size, x:x+self.image_size]
+            self.normal_batch[batch_idx] = self.normal[tile_id, y:y+self.image_size, x:x+self.image_size]
+        
         return (
-            self.image_batch[:batchsize, :, :, :],
-            self.mask_batch[:batchsize, :, :, :],
-            self.target_batch[:batchsize, :, :, :],
-            self.normal_batch[:batchsize, :, :, :],
-            self.sdmap_batch[:batchsize, :, :, :],
+            self.image_batch[:self.batch_size],
+            self.mask_batch[:self.batch_size],
+            self.target_batch[:self.batch_size],
+            self.normal_batch[:self.batch_size],
         )
 
 
 class ParallelDataLoader:
+    """
+    A parallel data loader that manages multiple Dataloader instances in separate threads
+    to enable concurrent data loading and preprocessing.
+    """
+    
     def __init__(self, *args, **kwargs):
-        self.n = 4
-        self.subloader = []
-        self.subloaderReadyEvent = []
-        self.subloaderWaitEvent = []
-
-        self.current_loader_id = 0
-
-        for i in range(self.n):
-            self.subloader.append(Dataloader(*args, **kwargs))
-            self.subloaderReadyEvent.append(threading.Event())
-            self.subloaderWaitEvent.append(threading.Event())
-
-        for i in range(self.n):
-            self.subloaderReadyEvent[i].clear()
-            self.subloaderWaitEvent[i].clear()
-        for i in range(self.n):
-            x = threading.Thread(target=self.daemon, args=(i,))
-            x.start()
-
-    def daemon(self, tid):
-        c = 0
-
+        """Initialize parallel data loader with multiple subloaders."""
+        self.num_workers = 4  # Number of worker threads
+        self.subloaders = []
+        self.ready_events = []  # Events signaling when subloader has data ready
+        self.wait_events = []   # Events to signal subloader to start preloading
+        
+        self.current_loader_index = 0
+        
+        # Create subloaders and their associated events
+        for i in range(self.num_workers):
+            self.subloaders.append(Dataloader(*args, **kwargs))
+            self.ready_events.append(threading.Event())
+            self.wait_events.append(threading.Event())
+        
+        # Start worker threads
+        self._start_worker_threads()
+    
+    def _start_worker_threads(self):
+        """Start daemon threads for each subloader."""
+        for worker_id in range(self.num_workers):
+            self.ready_events[worker_id].clear()
+            self.wait_events[worker_id].clear()
+            
+            worker_thread = threading.Thread(
+                target=self._worker_daemon, 
+                args=(worker_id,), 
+                daemon=True
+            )
+            worker_thread.start()
+    
+    def _worker_daemon(self, worker_id):
+        """
+        Worker thread that continuously preloads data.
+        
+        Args:
+            worker_id: ID of this worker thread
+        """
         while True:
-            #
-            t0 = time()
-            print("thread-%d starts preloading" % tid)
-            self.subloader[tid].preload(None)
-
-            self.subloaderReadyEvent[tid].set()
-
-            print("thread-%d finished preloading (time = %.2f)" % (tid, time() - t0))
-
-            self.subloaderWaitEvent[tid].wait()
-            self.subloaderWaitEvent[tid].clear()
-
-            if c == 0 and tid == 0:
-                self.subloaderWaitEvent[tid].wait()
-                self.subloaderWaitEvent[tid].clear()
-
-            c = c + 1
-
+            print(f"Worker-{worker_id} starts preloading")
+            start_time = time.time()
+            
+            # Preload data
+            self.subloaders[worker_id].preload()
+            
+            elapsed_time = time.time() - start_time
+            print(f"Worker-{worker_id} finished preloading (time = {elapsed_time:.2f}s)")
+            
+            # Signal that data is ready
+            self.ready_events[worker_id].set()
+            
+            # Wait for signal to start next preload cycle
+            self.wait_events[worker_id].wait()
+            self.wait_events[worker_id].clear()
+    
     def preload(self):
-        # release the current one
-        self.subloaderWaitEvent[self.current_loader_id].set()
+        """Trigger preloading for the next worker and switch to it."""
+        # Signal current worker to start next preload cycle
+        self.wait_events[self.current_loader_index].set()
+        
+        # Move to next worker
+        self.current_loader_index = (self.current_loader_index + 1) % self.num_workers
+        
+        # Wait for the next worker to have data ready
+        self.ready_events[self.current_loader_index].wait()
+        self.ready_events[self.current_loader_index].clear()
+    
+    def get_batch(self):
+        """
+        Get a batch of data from available workers.
+        
+        Args:
+            batch_size: Number of samples in the batch
+            
+        Returns:
+            Tuple of batch data or None if no data available
+        """
+        attempts = 0
+        
+        # Try each worker once
+        while attempts < self.num_workers:
+            batch = self.subloaders[self.current_loader_index].get_batch()
+            
+            if batch is not None:
+                return batch
+            
+            print(f"Worker-{self.current_loader_index} exhausted")
+            
+            # Current worker is exhausted, signal it to preload and switch
+            self.wait_events[self.current_loader_index].set()
+            self.current_loader_index = (self.current_loader_index + 1) % self.num_workers
+            
+            # Wait for next worker to be ready
+            self.ready_events[self.current_loader_index].wait()
+            self.ready_events[self.current_loader_index].set()
+            
+            attempts += 1
+        
+        # All workers exhausted, wait for any worker to finish preloading
+        return self._wait_for_any_worker_ready()
+    
+    def _wait_for_any_worker_ready(self):
+        """
+        Wait for any worker to finish preloading and return a batch.
+        
+        Args:
+            batch_size: Number of samples in the batch
+            
+        Returns:
+            Tuple of batch data
+        """
+        print("All workers exhausted. Waiting for any worker to finish preloading...")
+        
+        while True:
+            for worker_id in range(self.num_workers):
+                if self.ready_events[worker_id].is_set():
+                    self.current_loader_index = worker_id
+                    self.ready_events[worker_id].clear()
+                    return self.get_batch()
+            
+            # Small sleep to avoid busy waiting
+            time.sleep(0.001)
+    
+    def get_current_loader(self):
+        """Get the currently active subloader."""
+        return self.subloaders[self.current_loader_index]
 
-        self.current_loader_id = (self.current_loader_id + 1) % self.n
+def get_dataloaders(dataloaders_config):
+    """
+    Create training, validation, and testing dataloaders based on the provided configuration.
+    Args:
+        dataloaders_config: Configuration dictionary containing paths and ranges for each dataset split.
+    Returns:
+        Tuple of training, validation, and testing dataloaders.
+    """
+    train_config = dataloaders_config.train
+    validate_config = dataloaders_config.validate
+    test_config = dataloaders_config.test
+    
+    def get_dataloader(dataloader_config):
+        """
+        Create a Dataloader instance based on the provided configuration.
+        Args:
+            config: Configuration dictionary for the dataloader.
+            mode: Mode of the dataloader (train, validate, test).
+        Returns:
+            Dataloader instance.
+        """
+        return ParallelDataLoader(
+            batch_size=dataloader_config.batch_size,
+            data_path=dataloader_config.data_path,
+            indrange=dataloader_config.indrange,
+            image_size=dataloader_config.image_size,
+            dataset_image_size=dataloader_config.dataset_image_size,
+            batch_size=dataloader_config.batch_size,
+            preload_tiles=dataloader_config.preload_tiles,
+            training=dataloader_config.training
+        )
+    train_dataloader = get_dataloader(train_config)
+    validate_dataloader = get_dataloader(validate_config)
+    test_dataloader = get_dataloader(test_config)
+    
+    return train_dataloader, validate_dataloader, test_dataloader
 
-        self.subloaderReadyEvent[self.current_loader_id].wait()
-        self.subloaderReadyEvent[self.current_loader_id].clear()
 
-    def getBatch(self, batch_size):
-        return self.subloader[self.current_loader_id].getBatch(batch_size)
+if __name__ == "__main__":
+    config = load_config("configs/train_lane_and_direction_extraction.py")
+    dataloaers_config = config.dataloaders
+    train_dataloader, validate_dataloader, test_dataloader = get_dataloaders(dataloaers_config)
 
-    def current(self):
-        return self.subloader[self.current_loader_id]

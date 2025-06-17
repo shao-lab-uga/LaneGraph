@@ -124,7 +124,19 @@ for region in regions:
                     )
                     cv2.imwrite(outputfolder + "/lane_%d.jpg" % (counter_out), lane)
                     cv2.imwrite(outputfolder + "/normal_%d.jpg" % (counter_out), normal)
-
+                    with open(
+                        outputfolder + "/region_%d.json" % (counter_out), "w"
+                    ) as f:
+                        json.dump(
+                            {
+                                "lat": subregion[0],
+                                "lon": subregion[1],
+                                "lat2": subregion[2],
+                                "lon2": subregion[3],
+                                "tag": region_tag,
+                            },
+                            f,
+                        )
                     counter_out += 1
                     print(counter_out)
 

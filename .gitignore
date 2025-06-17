@@ -17,3 +17,6 @@ validation_laneExtraction*/*
 
 # Pytorch Files
 *.pth
+
+# Data files
+processed_data/*
