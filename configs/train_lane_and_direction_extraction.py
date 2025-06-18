@@ -24,39 +24,39 @@ validation_range = data_attributes_config.validation_range
 # ============= Train Parameters =================
 num_machines = 1
 gpu_ids = [0,1]
-batch_size = 8
+batch_size = 4
 preload_tiles=4
-max_epochs = len(training_range) * dataset_image_size * dataset_image_size / (batch_size * input_image_size * input_image_size)
-
+epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
+max_epochs = 500  # Total number of epochs to train
 # ============= Optimizer Parameters =================
 optimizer_type = 'AdamW'
 optimizers_dic = dict(
     AdamW=dict(
         type='AdamW',       # AdamW optimizer
-        learning_rate=3e-4,            # Base learning rate
+        learning_rate=1e-3,            # Base learning rate
         betas=(0.9, 0.95),  # Slightly higher β2 for smoother updates
         eps=1e-8,           # Avoids division by zero
         weight_decay=1e-6   # Encourages generalization
     ),
     NAdam=dict(
         type='NAdam',       # NAdam optimizer
-        learning_rate = 1e-4,
+        learning_rate = 1e-3,
         weight_decay = 1e-4
     )
 )
 assert optimizer_type in optimizers_dic, f"Optimizer type {optimizer_type} is not supported"
 # ============= Scheduler Parameters =================
-scheduler_type = 'CosineAnnealingWarmRestarts'
+scheduler_type = 'StepLR'
 schedulers_dic = dict(
     StepLR=dict(
         type='StepLR',      # StepLR scheduler
-        step_size = 3,
+        step_size = max_epochs // 5,
         gamma = 0.5
     ),
     CosineAnnealingWarmRestarts=dict(
         type='CosineAnnealingWarmRestarts',  # CosineAnnealingWarmRestarts scheduler
-        T_0=2,    # First restart at 2 epochs
-        T_mult=2,  # Restart period doubles (2 → 4 → 8 epochs)
+        T_0=max_epochs // 10,    # First restart at 10% of max_epochs
+        T_mult=2,  # Restart period doubles
         eta_min=1e-6  # Minimum LR to avoid vanishing updates
     )
 )
@@ -107,9 +107,7 @@ config = dict(
             # ('vit_base_patch16_224.dino', 'vitdecoder'),
         # ]
         lane_and_direction_extraction_model=dict(
-            backbone_name = 'resnet34',  # Backbone model name
-            decoder_type = 'fpn',  # Decoder type, can be 'fpn' or 'deeplabv3plus'
-            output_dim=3,  # Output dimension for lane and direction extraction
+            num_classes = 4,  # Output dimension for lane and direction extraction
         )
         
     ),
@@ -123,9 +121,12 @@ config = dict(
     optimizer = optimizers_dic[optimizer_type],
     scheduler = schedulers_dic[scheduler_type],
     train=dict(
+        epoch_size=epoch_sisze,
         max_epochs=max_epochs,
-        checkpoint_interval=1,
+        epoch_sisze=epoch_sisze,
+        checkpoint_interval=50,
         checkpoint_dir=os.path.join(project_dir, 'checkpoints'),
+        visualize_output_path=os.path.join(project_dir, 'visualizations'),
         checkpoint_total_limit=10,
         log_interval=10,
     ),

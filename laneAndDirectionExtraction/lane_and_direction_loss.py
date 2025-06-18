@@ -56,8 +56,8 @@ class LaneAndDirectionExtractionLoss():
         Returns:
             loss: scalar tensor representing the total loss
         """
-        lane_cross_entropy_loss = self.binary_softmax_ce_loss(lane_predicted, lane_groundtruth, region_mask)
-        lane_dice_loss = self.binary_dice_loss(lane_predicted, lane_groundtruth, region_mask)
+        lane_cross_entropy_loss = self.cross_entropy_loss(lane_predicted, lane_groundtruth, region_mask)
+        lane_dice_loss = self.dice_loss(lane_predicted, lane_groundtruth, region_mask)
         direction_l2_loss = torch.mean(region_mask * torch.square(direction_groundtruth - direction_predicted))
         # Combine losses into a dictionary
         loss_dict = {
@@ -76,28 +76,35 @@ class LaneAndDirectionExtractionLoss():
         self.lane_dice_loss.reset()
         self.direction_l2_loss.reset()
 
-    def binary_softmax_ce_loss(self, logits, targets, mask):
+
+    def cross_entropy_loss(self, logits, targets, mask):
         """
-        Binary softmax cross-entropy loss using two-channel logits.
-        logits: [B, 2, H, W] (raw outputs)
-        targets: [B, 1, H, W] (0 or 1)
-        mask: [B, 1, H, W] (1: include, 0: ignore)
+        Custom cross-entropy loss for binary classification with two logits channels.
+        logits: prediction logits of shape [B, 2, H, W]
+        targets: target labels of shape [B, 1, H, W], binary (0 or 1)
+        mask: mask of shape [B, 1, H, W], 1 for valid region, 0 to ignore
         """
-        logsumexp = F.logsumexp(logits, dim=1, keepdim=True)  # [B, 1, H, W]
-        class0 = logits[:, 0:1, :, :]
-        class1 = logits[:, 1:2, :, :]
-        loss = -(targets * class0 + (1 - targets) * class1 - logsumexp)
+        p0 = logits[:, 0:1, :, :]  # logits for class 0 which is the lane
+        p1 = logits[:, 1:2, :, :]  # logits for class 1 which is the non-lane
+
+        # Numerically stable log-sum-exp formulation of softmax cross-entropy
+        logsumexp = torch.log(torch.exp(p0) + torch.exp(p1))
+        loss = -(targets * p0 + (1 - targets) * p1 - logsumexp)
+
         return torch.mean(loss * mask)
 
 
-    def binary_dice_loss(self, logits, targets, mask):
+    def dice_loss(self, logits, targets, mask):
         """
-        Dice loss computed using sigmoid on the difference of logits.
-        logits: [B, 2, H, W]
-        targets: [B, 1, H, W]
-        mask: [B, 1, H, W]
+        Dice loss based on the sigmoid of logit difference.
+        logits: prediction logits of shape [B, 2, H, W]
+        targets: target labels of shape [B, 1, H, W]
+        mask: binary mask of shape [B, 1, H, W]
         """
-        probs = torch.sigmoid(logits[:, 0:1, :, :] - logits[:, 1:2, :, :])
-        intersection = torch.sum(probs * targets * mask)
-        union = torch.sum((probs + targets) * mask) + 1.0
-        return 1.0 - (2.0 * intersection / union)
+        # Convert logits to probability map using sigmoid on class difference
+        prob = torch.sigmoid(logits[:, 0:1, :, :] - logits[:, 1:2, :, :])
+
+        numerator = 2 * torch.sum(prob * targets * mask)
+        denominator = torch.sum((prob + targets) * mask) + 1.0  # avoid zero division
+
+        return 1 - numerator / denominator

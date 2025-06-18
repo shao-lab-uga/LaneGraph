@@ -1,67 +1,129 @@
-from torch import nn
-from laneAndDirectionExtraction.backbone import BackboneWrapper, ViTBackboneWrapper
-from laneAndDirectionExtraction.decoder import FPNDecoder, ViTUNetDecoder
 import torch
-class LaneAndDirectionExtractionModel(nn.Module):
+import torchvision
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class DecoderBlock(nn.Module):
+    """Upscaling then double conv"""
+
+    def __init__(
+        self,
+        conv_in_channels,
+        conv_out_channels,
+        up_in_channels=None,
+        up_out_channels=None,
+    ):
+        super().__init__()
+        """
+        eg:
+        decoder1:
+        up_in_channels      : 1024,     up_out_channels     : 512
+        conv_in_channels    : 1024,     conv_out_channels   : 512
+
+        decoder5:
+        up_in_channels      : 64,       up_out_channels     : 64
+        conv_in_channels    : 128,      conv_out_channels   : 64
+        """
+        if up_in_channels == None:
+            up_in_channels = conv_in_channels
+        if up_out_channels == None:
+            up_out_channels = conv_out_channels
+
+        self.up = nn.ConvTranspose2d(
+            up_in_channels, up_out_channels, kernel_size=2, stride=2
+        )
+        self.conv = nn.Sequential(
+            nn.Conv2d(
+                conv_in_channels,
+                conv_out_channels,
+                kernel_size=3,
+                padding=1,
+                bias=False,
+            ),
+            nn.BatchNorm2d(conv_out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(
+                conv_out_channels,
+                conv_out_channels,
+                kernel_size=3,
+                padding=1,
+                bias=False,
+            ),
+            nn.BatchNorm2d(conv_out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    # x1-upconv , x2-downconv
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        x = torch.cat([x1, x2], dim=1)
+        return self.conv(x)
+
+
+class UnetResnet34(nn.Module):
     def __init__(self, model_config):
         super().__init__()
-        self.backbone_name = model_config.backbone_name
-        self.decoder_type = model_config.decoder_type
-        self.output_dim = model_config.output_dim
-        if any(vit_type in self.backbone_name.lower() for vit_type in ['vit', 'coat', 'maxvit']):
-            self.encoder = ViTBackboneWrapper(self.backbone_name)
-        else:
-            self.encoder = BackboneWrapper(self.backbone_name)
+        self.num_classes = model_config.num_classes
+        resnet34 = torchvision.models.resnet34(pretrained=False)
+        filters = [64, 128, 256, 512]
 
-        channels = self.encoder.out_channels
-        for channel in channels:
-            print(f"Encoder channel: {channel}")
-        if self.decoder_type == 'fpn':
-            self.decoder = FPNDecoder(channels, out_channels=64)
-            final_channels = 64
-        elif self.decoder_type == 'vitdecoder':
-            self.decoder = ViTUNetDecoder(in_channels=channels[0], base_channels=256)
-            final_channels = 256 // (2 ** (4-1)) 
-        else:
-            raise ValueError(f"Unsupported decoder_type: {self.decoder_type}")
+        self.firstlayer = nn.Sequential(*list(resnet34.children())[:3])
+        self.maxpool = list(resnet34.children())[3]
+        self.encoder1 = resnet34.layer1
+        self.encoder2 = resnet34.layer2
+        self.encoder3 = resnet34.layer3
+        self.encoder4 = resnet34.layer4
 
-        self.final_conv = nn.Conv2d(final_channels, self.output_dim, kernel_size=1)
+        self.bridge = nn.Sequential(
+            nn.Conv2d(filters[3], filters[3] * 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(filters[3] * 2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+
+        self.decoder1 = DecoderBlock(
+            conv_in_channels=filters[3] * 2, conv_out_channels=filters[3]
+        )
+        self.decoder2 = DecoderBlock(
+            conv_in_channels=filters[3], conv_out_channels=filters[2]
+        )
+        self.decoder3 = DecoderBlock(
+            conv_in_channels=filters[2], conv_out_channels=filters[1]
+        )
+        self.decoder4 = DecoderBlock(
+            conv_in_channels=filters[1], conv_out_channels=filters[0]
+        )
+        self.decoder5 = DecoderBlock(
+            conv_in_channels=filters[1],
+            conv_out_channels=filters[0],
+            up_in_channels=filters[0],
+            up_out_channels=filters[0],
+        )
+
+        self.lastlayer = nn.Sequential(
+            nn.ConvTranspose2d(
+                in_channels=filters[0], out_channels=filters[0], kernel_size=2, stride=2
+            ),
+            nn.Conv2d(filters[0], self.num_classes, kernel_size=3, padding=1, bias=True),
+        )
 
     def forward(self, x):
-        feats = self.encoder(x)
-        x = self.decoder(feats)
-        x = self.final_conv(x)
-        return x.permute(0, 2, 3, 1)  # [B, C, H, W] → [B, H, W, C]
+        e1 = self.firstlayer(x)  # N,3,640,640->N,64,320,320
+        maxe1 = self.maxpool(e1)  # N,64,320,320->N,64,160,160
+        e2 = self.encoder1(maxe1)  # N,64,160,160->N,64,160,160
+        e3 = self.encoder2(e2)  # N,64,160,160->N,128,80,80
+        e4 = self.encoder3(e3)  # N,128,80,80->N,256,40,40
+        e5 = self.encoder4(e4)  # N,256,40,40->N,512,   20,20
 
-import torch
-from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
+        c = self.bridge(e5)  # N,512,20,20->N,1024,10,10
 
-def test_model(backbone_name, decoder_type, output_dim=3, input_size=640):
-    print(f"🧪 Testing: Backbone = {backbone_name}, Decoder = {decoder_type}")
+        d1 = self.decoder1(c, e5)  # N,512,20,20
+        d2 = self.decoder2(d1, e4)  # N,256,40,40
+        d3 = self.decoder3(d2, e3)  # N,128,80,80
+        d4 = self.decoder4(d3, e2)  # N,64,160,160
+        d5 = self.decoder5(d4, e1)  # N,64,320,320
 
-    model = LaneAndDirectionExtractionModel(
-        backbone_name=backbone_name,
-        decoder_type=decoder_type,
-        output_dim=output_dim
-    )
-    model.eval()
+        out = self.lastlayer(d5)  # N,num_classes=4,640,640
 
-    x = torch.randn(2, input_size, input_size, 3)  # [B, H, W, 3]
-    with torch.no_grad():
-        y = model(x)
-
-    print(f"✅ Output shape: {y.shape}\n")
-    assert y.shape[1] == input_size and y.shape[2] == input_size, "Output shape mismatch!"
-
-# ====================
-# Define test settings
-# ====================
-test_settings = [
-    # ("resnet34", "fpn"),
-    # ("resnet50", "fpn"),
-    ('vit_base_patch16_224.dino', 'vitdecoder'),
-]
-
-if __name__ == "__main__":
-    for backbone, decoder in test_settings:
-        test_model(backbone, decoder)
+        return out

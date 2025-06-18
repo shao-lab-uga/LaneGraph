@@ -20,3 +20,4 @@ validation_laneExtraction*/*
 
 # Data files
 processed_data/*
+exp/*

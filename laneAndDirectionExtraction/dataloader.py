@@ -261,14 +261,14 @@ class ParallelDataLoader:
             worker_id: ID of this worker thread
         """
         while True:
-            print(f"Worker-{worker_id} starts preloading")
+            # print(f"Worker-{worker_id} starts preloading")
             start_time = time.time()
             
             # Preload data
             self.subloaders[worker_id].preload()
             
             elapsed_time = time.time() - start_time
-            print(f"Worker-{worker_id} finished preloading (time = {elapsed_time:.2f}s)")
+            # print(f"Worker-{worker_id} finished preloading (time = {elapsed_time:.2f}s)")
             
             # Signal that data is ready
             self.ready_events[worker_id].set()
@@ -308,7 +308,7 @@ class ParallelDataLoader:
             if batch is not None:
                 return batch
             
-            print(f"Worker-{self.current_loader_index} exhausted")
+            # print(f"Worker-{self.current_loader_index} exhausted")
             
             # Current worker is exhausted, signal it to preload and switch
             self.wait_events[self.current_loader_index].set()
@@ -333,7 +333,7 @@ class ParallelDataLoader:
         Returns:
             Tuple of batch data
         """
-        print("All workers exhausted. Waiting for any worker to finish preloading...")
+        # print("All workers exhausted. Waiting for any worker to finish preloading...")
         
         while True:
             for worker_id in range(self.num_workers):
@@ -371,7 +371,6 @@ def get_dataloaders(dataloaders_config):
             Dataloader instance.
         """
         return ParallelDataLoader(
-            batch_size=dataloader_config.batch_size,
             data_path=dataloader_config.data_path,
             indrange=dataloader_config.indrange,
             image_size=dataloader_config.image_size,
@@ -383,7 +382,9 @@ def get_dataloaders(dataloaders_config):
     train_dataloader = get_dataloader(train_config)
     validate_dataloader = get_dataloader(validate_config)
     test_dataloader = get_dataloader(test_config)
-    
+    train_dataloader.preload()
+    validate_dataloader.preload()
+    test_dataloader.preload()
     return train_dataloader, validate_dataloader, test_dataloader
 
 

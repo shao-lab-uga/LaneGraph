@@ -1,25 +1,24 @@
 import os
 import torch
-import warnings
 import argparse
-from tqdm import tqdm
-from utils.training_utils import load_checkpoint, save_checkpoint
-from utils.config_utils import load_config
-from torch.utils.tensorboard import SummaryWriter
-import torch.nn.functional as F
-import numpy as np
 import einops
-from model import LaneAndDirectionExtractionModel
-# warnings.filterwarnings("ignore")
+import warnings
+warnings.filterwarnings("ignore")
+from model import UnetResnet34
 from lane_and_direction_loss import LaneAndDirectionExtractionLoss
+from utils.config_utils import load_config
+from utils.training_utils import load_checkpoint, save_checkpoint
 from laneAndDirectionExtraction.dataloader import get_dataloaders
+from laneAndDirectionExtraction.infer_utils import visualizatize_lane_and_direction
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 def setup(config, gpu_id):
     """
     Setup the model, optimizer, scheduler, and losses.
     """
     # //[ ] The model config need to be updated if the model is changed
     model_config = config.models
-    model = LaneAndDirectionExtractionModel(model_config.lane_and_direction_extraction_model).to(gpu_id)
+    model = UnetResnet34(model_config.lane_and_direction_extraction_model).to(gpu_id)
 
     # Load the optimizer
     optimizer_config = config.optimizer
@@ -75,6 +74,8 @@ def model_training(gpu_id, world_size, config, enable_ddp=True):
 
     train_config = config.train
     checkpoint_dir = train_config.checkpoint_dir
+    visualize_output_path = train_config.visualize_output_path
+    epoch_sisze = train_config.epoch_size
     max_epochs = train_config.max_epochs
     checkpoint_interval = train_config.checkpoint_interval
     checkpoint_total_limit = train_config.checkpoint_total_limit
@@ -87,7 +88,7 @@ def model_training(gpu_id, world_size, config, enable_ddp=True):
     tensorboard_config = logger_config.tensorboard
     logger = SummaryWriter(log_dir=tensorboard_config.log_dir)
 
-    model, optimizer, scheduler, lane_and_direction_loss = setup(config, gpu_id, enable_ddp=enable_ddp)
+    model, optimizer, scheduler, lane_and_direction_loss = setup(config, gpu_id)
     continue_ep, global_step = load_checkpoint(model, optimizer, scheduler, checkpoint_dir, gpu_id)
     
 
@@ -98,96 +99,90 @@ def model_training(gpu_id, world_size, config, enable_ddp=True):
             continue
         
         model.train()
+        for batch_idx in tqdm(range(epoch_sisze)):
+            inputs = train_dataloader.get_batch()
+            def parse_inputs(inputs):   
+                """
+                Parse the inputs from the dataloader.
+                Args:
+                    data: The data from the dataloader (numpy array).
+                Returns:
+                    input_image: The input image [B, 3, H, W].
+                    region_mask: The region mask [B, 1, H, W].
+                    lane_groundtruth: The ground truth for lane [B, 1, H, W].
+                    direction_groundtruth: The ground truth for direction [B, 2, H, W].
+                """
+                input_image, region_mask, lane_groundtruth, direction_groundtruth = inputs
+                
+                input_image = torch.from_numpy(input_image).float().to(gpu_id)  # [B, H, W, 3]
+                input_image = einops.rearrange(input_image, 'b h w c -> b c h w') # [B, 3, H, W]
 
-        data = train_dataloader.get_batch()
-            
-        input_image, region_mask, lane_groundtruth, direction_groundtruth = data
-        def parse_outputs(outputs):
-            """
-            Parse the outputs from the model.
-            Args:
-                outputs: The outputs from the model. [B, H ,W, 3]
-            Returns:
-                lane_predicted: The predicted lane logits [B, 1, H ,W].
-                direction_predicted: The predicted direction logits [B, 2, H ,W].
-            """
-            lane_predicted = outputs[..., 0:1]
-            direction_predicted = outputs[..., 1:3]
-            return lane_predicted, direction_predicted
-        
-        lane_predicted, direction_predicted = parse_outputs(model.forward(input_image))
-        loss_dic = lane_and_direction_loss.compute(lane_predicted, direction_predicted, region_mask, lane_groundtruth, direction_groundtruth)
-        loss_value = torch.sum(sum(lane_and_direction_loss.values()))
-        # backward pass
-        optimizer.zero_grad()
-        loss_value.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
-        optimizer.step()
-        
-        global_step += 1
-        
-        if gpu_id == 0:
-            if epoch % log_interval == 0:
-                logger.add_scalars(main_tag="lane_and_direction_loss", tag_scalar_dict=loss_dic, global_step=global_step)  
-        
+                region_mask = torch.from_numpy(region_mask).float().to(gpu_id)  # [B, H, W, 1]
+                region_mask = einops.rearrange(region_mask, 'b h w c -> b c h w')  # [B, 1, H, W]
+
+                lane_groundtruth = torch.from_numpy(lane_groundtruth).float().to(gpu_id) # [B, H, W, 1]
+                lane_groundtruth = einops.rearrange(lane_groundtruth, 'b h w c -> b c h w')  # [B, 1, H, W]
+
+                direction_groundtruth = torch.from_numpy(direction_groundtruth).float().to(gpu_id)  # [B, H, W, 2]
+                direction_groundtruth = einops.rearrange(direction_groundtruth, 'b h w c -> b c h w')  # [B, 2, H, W]
+
+                return input_image, region_mask, lane_groundtruth, direction_groundtruth
+
+            input_image, region_mask, lane_groundtruth, direction_groundtruth = parse_inputs(inputs)
+
+            def parse_outputs(outputs):
+                """
+                Parse the outputs from the model.
+                Args:
+                    outputs: The outputs from the model. [B, 4, H ,W]
+                Returns:
+                    lane_predicted: The predicted lane logits [B, 2, H ,W].
+                    direction_predicted: The predicted direction logits [B, 2, H ,W].
+                """
+                lane_predicted = outputs[:, 0:2, :, :]  # [B, 2, H, W]
+                direction_predicted = outputs[:, 2:4, :, :]
+                return lane_predicted, direction_predicted
+
+            lane_predicted, direction_predicted = parse_outputs(model.forward(input_image))
+            lane_and_direction_loss_dic = lane_and_direction_loss.compute(lane_predicted, direction_predicted, region_mask, lane_groundtruth, direction_groundtruth)
+            loss_value = torch.sum(sum(lane_and_direction_loss_dic.values()))
+            # backward pass
+            optimizer.zero_grad()
+            loss_value.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+            optimizer.step()
+            lane_and_direction_loss.update(lane_and_direction_loss_dic)
+
+            global_step += 1
+            lane_and_direction_loss_res_dict = lane_and_direction_loss.get_result()
+            if gpu_id == 0:
+                if batch_idx % log_interval == 0:
+                    logger.add_scalars(main_tag="lane_and_direction_loss", tag_scalar_dict=lane_and_direction_loss_res_dict, global_step=global_step)
+                    input_image, region_mask, lane_groundtruth, direction_groundtruth = inputs
+                    lane_predicted = einops.rearrange(lane_predicted, 'b c h w -> b h w c')
+                    lane_predicted = lane_predicted.detach().cpu().numpy()
+                    direction_predicted = einops.rearrange(direction_predicted, 'b c h w -> b h w c')
+                    direction_predicted = direction_predicted.detach().cpu().numpy()
+                    visualizatize_lane_and_direction(visualize_output_path, global_step,
+                                                    input_satellite_image=input_image,
+                                                    region_mask=region_mask,
+                                                    lane_predicted=lane_predicted,
+                                                    direction_predicted=direction_predicted,
+                                                    lane_groundtruth=lane_groundtruth,
+                                                    direction_groundtruth=direction_groundtruth,
+                                                    visulize_all=False
+                                                    )
+
+            if (global_step + 1) % 50 == 0:
+                train_dataloader.preload()
         scheduler.step()
         # [ ] Currently the validation is not implemented, but it can be added later.
-        ## validate
-        
-        # occupancy_flow_map_loss.reset()
-        # trajectory_loss.reset()
-        # occupancy_flow_map_metrics = OccupancyFlowMapMetrics(gpu_id, no_warp=False)
-        
-        # torch.cuda.empty_cache()
-        # model.eval()
-        # if enable_ddp:
-        #     val_dataloader.sampler.set_epoch(epoch)
-        # vehicles_observed_occupancy_auc = []
-        # vehicles_observed_occupancy_iou = []
-        # observed_occupancy_cross_entropy = []
-        # with torch.no_grad():
-        #     loop = tqdm(enumerate(val_dataloader), total=len(val_dataloader))
-        #     for batch_idx, data in loop:
-                
-        #         input_dict, ground_truth_dict = parse_data(data, gpu_id, config)
-        
-        #         input_dict = input_dict['cur']
-        #         ground_truth_dict = ground_truth_dict['cur']
-
-        #         # get the input
-        #         his_occupancy_map = input_dict['his/observed_occupancy_map']
-        #         # add a slight noise to the input
-                
-
-        #         # get the ground truth
-        #         gt_observed_occupancy_logits = ground_truth_dict['pred/observed_occupancy_map']
-        #         gt_valid_mask = ground_truth_dict['pred/valid_mask']
-        #         gt_occupancy_flow_map_mask = (torch.sum(gt_valid_mask, dim=-2) > 0)
-
-                
-        #         pred_observed_occupancy_logits = model.forward(his_occupancy_map, gt_observed_occupancy_logits, training=False)
-
-        #         loss_dic = occupancy_flow_map_loss.compute_occypancy_map_loss(pred_observed_occupancy_logits, gt_observed_occupancy_logits, gt_occupancy_flow_map_mask)
-
-        #         observed_occupancy_cross_entropy.append(loss_dic['observed_occupancy_cross_entropy'])
-        #         pred_observed_occupancy_logits = torch.sigmoid(pred_observed_occupancy_logits)
-                
-        #         occupancy_flow_map_metrics_dict = occupancy_flow_map_metrics.compute_occupancy_metrics(pred_observed_occupancy_logits, gt_observed_occupancy_logits, gt_occupancy_flow_map_mask)
-        #         # print(occupancy_flow_map_metrics_dict)
-        #         vehicles_observed_occupancy_auc.append(occupancy_flow_map_metrics_dict['vehicles_observed_occupancy_auc'])
-        #         vehicles_observed_occupancy_iou.append(occupancy_flow_map_metrics_dict['vehicles_observed_occupancy_iou'])
-                
-        #     occupancy_flow_map_metrics_res_dict = {'vehicles_observed_occupancy_auc': torch.mean(torch.stack(vehicles_observed_occupancy_auc)),
-        #                                             'vehicles_observed_occupancy_iou': torch.mean(torch.stack(vehicles_observed_occupancy_iou))}
-        #     occupancy_flow_map_loss_res_dict = {'observed_occupancy_cross_entropy': torch.mean(torch.stack(observed_occupancy_cross_entropy))}
-        #     if gpu_id == 0:
-        #         logger.add_scalars(main_tag="val_occupancy_flow_map_metrics", tag_scalar_dict=occupancy_flow_map_metrics_res_dict, global_step=global_step)
-        #         logger.add_scalars(main_tag="val_occupancy_flow_map_loss", tag_scalar_dict=occupancy_flow_map_loss_res_dict, global_step=global_step)
 
         if gpu_id == 0:
             if (epoch+1) % checkpoint_interval == 0:
                 save_checkpoint(model, optimizer, scheduler, epoch, global_step, checkpoint_dir, checkpoint_total_limit)
-
+                
+            
 
 if __name__ == "__main__":
     # ============= Parse Argument =============
@@ -198,67 +193,3 @@ if __name__ == "__main__":
     config = load_config(args.config)
     world_size = torch.cuda.device_count()
     model_training(0, world_size, config, enable_ddp=False)
-
-
-
-
-        # def visualization(self, step, result=None, batch=None):
-        # direction_img = np.zeros((self.image_size, self.image_size, 3))
-
-        # if step % SAVE_FIGURE_INTERVAL == 0:
-        #     # ind = ((step // 100) * self.batch_size) % 128
-        #     ind = (step // SAVE_FIGURE_INTERVAL) * self.batch_size
-
-        #     # batch[3] = np.clip(batch[3], -1, 1)
-        #     # result[1] = np.clip(result[1], -1, 1)
-
-        #     for i in range(self.batch_size):
-        #         idStr = "_{}_{}_{}".format(
-        #             int(step // (self.epochsize)), step, i
-        #         )  # convention: epoch, step, index of figure
-
-        #         Image.fromarray(
-        #             ((batch[0][i, :, :, :] + 0.5) * 255).astype(np.uint8)
-        #         ).save(os.path.join(self.validationfolder, "input{}.jpg".format(idStr)))
-        #         Image.fromarray(((batch[1][i, :, :, 0]) * 255).astype(np.uint8)).save(
-        #             os.path.join(self.validationfolder, "mask{}.jpg".format(idStr))
-        #         )
-        #         Image.fromarray(((batch[2][i, :, :, 0]) * 255).astype(np.uint8)).save(
-        #             os.path.join(self.validationfolder, "target{}.jpg".format(idStr))
-        #         )
-        #         if self.use_sdmap:
-        #             Image.fromarray(
-        #                 ((batch[4][i, :, :, 0]) * 255).astype(np.uint8)
-        #             ).save(
-        #                 os.path.join(self.validationfolder, "sdmap{}.jpg".format(idStr))
-        #             )
-
-        #         direction_img[:, :, 2] = batch[3][i, :, :, 0] * 127 + 127
-        #         direction_img[:, :, 1] = batch[3][i, :, :, 1] * 127 + 127
-        #         direction_img[:, :, 0] = 127
-
-        #         Image.fromarray(direction_img.astype(np.uint8)).save(
-        #             os.path.join(
-        #                 self.validationfolder, "targe_direction{}.jpg".format(idStr)
-        #             )
-        #         )
-
-        #         Image.fromarray(((result[1][i, :, :, 0]) * 255).astype(np.uint8)).save(
-        #             os.path.join(self.validationfolder, "output{}.jpg".format(idStr))
-        #         )
-
-        #         direction_img[:, :, 2] = (
-        #             np.clip(result[1][i, :, :, 1], -1, 1) * 127 + 127
-        #         )
-        #         direction_img[:, :, 1] = (
-        #             np.clip(result[1][i, :, :, 2], -1, 1) * 127 + 127
-        #         )
-        #         direction_img[:, :, 0] = 127
-
-        #         Image.fromarray(direction_img.astype(np.uint8)).save(
-        #             os.path.join(
-        #                 self.validationfolder, "output_direction{}.jpg".format(idStr)
-        #             )
-        #         )
-
-        # return False
