@@ -92,3 +92,7 @@ with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
     Image.fromarray(direction_img.astype(np.uint8)).save(
         outputfolder + "/direction.png"
     )
+
+
+
+

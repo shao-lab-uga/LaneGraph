@@ -53,3 +53,4 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_dir, gpu_id):
         global_step = 0
 
     return continue_ep, global_step
+

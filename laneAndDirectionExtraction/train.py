@@ -9,7 +9,7 @@ from lane_and_direction_loss import LaneAndDirectionExtractionLoss
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
 from laneAndDirectionExtraction.dataloader import get_dataloaders
-from laneAndDirectionExtraction.infer_utils import visualizatize_lane_and_direction
+from utils.inference_utils import visualizatize_lane_and_direction
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 def setup(config, gpu_id):
@@ -66,7 +66,7 @@ def setup(config, gpu_id):
     )
     return model, optimizer, scheduler, lane_and_direction_loss
 
-def model_training(gpu_id, world_size, config, enable_ddp=True):
+def model_training(gpu_id, world_size, config):
     
     project_dir = config.project_dir
     dataloaders_config = config.dataloaders
@@ -170,7 +170,8 @@ def model_training(gpu_id, world_size, config, enable_ddp=True):
                                                     direction_predicted=direction_predicted,
                                                     lane_groundtruth=lane_groundtruth,
                                                     direction_groundtruth=direction_groundtruth,
-                                                    visulize_all=False
+                                                    visulize_all_samples=False,
+                                                    visualize_groundtruth=True
                                                     )
 
             if (global_step + 1) % 50 == 0:
