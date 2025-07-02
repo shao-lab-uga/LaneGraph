@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import easydict
 from utils.config_utils import load_config
+
 class Dataloader:
     def __init__(
         self,
@@ -348,6 +349,7 @@ class ParallelDataLoader:
     def get_current_loader(self):
         """Get the currently active subloader."""
         return self.subloaders[self.current_loader_index]
+
 
 def get_dataloaders(dataloaders_config):
     """

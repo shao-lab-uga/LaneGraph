@@ -17,7 +17,6 @@ class LinkModel:
         self.batchsize = batchsize
         self.input = tf.placeholder(dtype=tf.float32, shape=[None, size, size, 3])
         self.connector = tf.placeholder(dtype=tf.float32, shape=[None, size, size, 7])
-        self.target_t = tf.placeholder(dtype=tf.float32, shape=[None, size, size, 1])
         self.context = tf.placeholder(dtype=tf.float32, shape=[None, size, size, 2])
         self.target = tf.placeholder(dtype=tf.float32, shape=[None, size, size, 3])
         self.target_label = tf.placeholder(dtype=tf.float32, shape=[None, 1])

@@ -3,11 +3,11 @@ from utils.config_utils import load_config
 # ============= Seed ===================
 random_seed = 42
 # ============= Path ===================
-project_name = 'LaneAndDirectionExtractionEvaluation'
+project_name = 'ReachableLaneExtractionValidation'  # Name of the project
 exp_dir = './exp/'  # PATH TO YOUR EXPERIMENT FOLDER
 project_dir = os.path.join(exp_dir, project_name)
 # ============= Dataset Parameters=================
-dataset_config = load_config("configs/dataset_lane_and_direction_extraction.py")
+dataset_config = load_config("configs/dataset.py")
 
 
 paths_config = dataset_config.paths
@@ -24,7 +24,7 @@ validation_range = data_attributes_config.validation_range
 # ============= Train Parameters =================
 num_machines = 1
 gpu_ids = [0,1]
-batch_size = 6
+batch_size = 2
 preload_tiles=4
 epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
 max_epochs = 200  # Total number of epochs to train
@@ -101,21 +101,22 @@ config = dict(
         ),
     ),
     models=dict(
-        # avaiable settings = [
-            # ("resnet34", "fpn"),
-            # ("resnet50", "fpn"),
-            # ('vit_base_patch16_224.dino', 'vitdecoder'),
-        # ]
-        lane_and_direction_extraction_model=dict(
-            num_classes = 4,  # Output dimension for lane and direction extraction
+        
+        reachable_lane_extraction_model=dict(
+            in_channels = 10,  
+            num_classes = 2, 
+        ),
+        reachable_lane_validation_model=dict(
+            in_channels = 13,  
+            num_classes = 2,  
         )
         
     ),
     losses=dict(
-        lane_and_direction_loss=dict(
+        reachable_lane_extraction_loss=dict(
             lane_cross_entropy_loss_weight=1.0,
             lane_dice_loss_weight=0.3,
-            direction_l2_loss_weight=2.0,
+            reachable_label_cross_entropy_loss_weight=0.0,
         ),
     ),
     optimizer = optimizers_dic[optimizer_type],

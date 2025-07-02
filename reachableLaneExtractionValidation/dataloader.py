@@ -31,7 +31,7 @@ class Dataloader:
         batch_size=8,
         preload_tiles=4,
         training=True,
-        maxbatchsize=32,
+        maxbatchsize=16,
     ):
         self.data_path = data_path
         self.indrange = indrange

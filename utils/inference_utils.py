@@ -53,9 +53,6 @@ def visualize_lane_and_direction_inference(visualize_output_path, input_satellit
         direction_predicted_image[:,:,0] = 127
         
         Image.fromarray(direction_predicted_image.astype(np.uint8)).save(os.path.join(visualize_output_path, f"direction_predicted_{i}.jpg"))
-            
-        
-    return False
 
 def visualize_lane_and_direction(visualize_output_path, step, input_satellite_image, region_mask, lane_predicted, direction_predicted,  lane_groundtruth, direction_groundtruth, visulize_all_samples=False, visualize_groundtruth=False):
     """
@@ -100,6 +97,45 @@ def visualize_lane_and_direction(visualize_output_path, step, input_satellite_im
         direction_predicted_image[:,:,0] = 127
         
         Image.fromarray(direction_predicted_image.astype(np.uint8)).save(os.path.join(visualize_output_path, f"direction_predicted_{step}_{i}.jpg"))
-            
+
+
+def visualize_reachable_lane(visualize_output_path, step, input_satellite_image, reachable_lane_predicted_node_a, reachable_lane_predicted_node_b, reachable_lane_groundtruth, direction_groundtruth, visulize_all_samples=False, visualize_groundtruth=False):
+    """
+    visualization function for lane and direction extraction.
+    Args:
+        visualize_output_path: str (path to save the visualizations)
+        step: int (current step in training)
         
-    return False
+        input_satellite_image: [B, H, W, 3] (input satellite image)
+        reachable_lane_predicted_node_a: [B, H, W, 2] (raw logits for reachable lane A)
+        reachable_lane_predicted_node_b: [B, H, W, 2] (raw logits for reachable lane B)
+        reachable_lane_groundtruth: [B, H, W, 1] (ground truth for reachable lane)
+        visulize_all_samples: bool (whether to visualize all images in the batch)
+        direction_groundtruth: [B, H, W, 2] (ground truth for direction)
+        visulize_all: bool (whether to visualize all images in the batch)
+    """
+    os.path.exists(visualize_output_path) or os.makedirs(visualize_output_path)
+    batch_size, _, image_size, _ = input_satellite_image.shape
+    visualize_range = range(batch_size) if visulize_all_samples else [0]  # Visualize all images in the batch if visulize_all is True, otherwise only the first image
+    for i in visualize_range:
+        if visualize_groundtruth:
+            Image.fromarray(((input_satellite_image[i,:,:,:] + 0.5) * 255).astype(np.uint8) ).save(os.path.join(visualize_output_path, f"input_{step}_{i}.jpg"))
+            Image.fromarray(((reachable_lane_groundtruth[i,:,:,1]) * 255).astype(np.uint8)).save(os.path.join(visualize_output_path, f"lane_groundtruth_a{step}_{i}.jpg"))
+            Image.fromarray(((reachable_lane_groundtruth[i,:,:,2]) * 255).astype(np.uint8)).save(os.path.join(visualize_output_path, f"lane_groundtruth_b{step}_{i}.jpg"))
+
+            direction_groundtruth_image = np.zeros((image_size, image_size, 3))
+            direction_groundtruth_image[:,:,2] = direction_groundtruth[i,:,:,0] * 127 + 127
+            direction_groundtruth_image[:,:,1] = direction_groundtruth[i,:,:,1] * 127 + 127
+            direction_groundtruth_image[:,:,0] = 127
+            Image.fromarray(direction_groundtruth_image.astype(np.uint8)).save(os.path.join(visualize_output_path, f"direction_groundtruth_{step}_{i}.jpg"))
+
+        reachable_lane_predicted_node_a_softmax = np.exp(reachable_lane_predicted_node_a[i,:,:,0]) / (np.exp(reachable_lane_predicted_node_a[i,:,:,0]) + np.exp(reachable_lane_predicted_node_a[i,:,:,1]))
+        reachable_lane_predicted_node_b_softmax = np.exp(reachable_lane_predicted_node_b[i,:,:,0]) / (np.exp(reachable_lane_predicted_node_b[i,:,:,0]) + np.exp(reachable_lane_predicted_node_b[i,:,:,1]))
+        # if the softmax value of the 0dim is greater than 0.5, then it is a reachable lane pixel
+        reachable_lane_predicted_image_a = np.zeros((image_size, image_size, 3))
+        reachable_lane_predicted_image_a[:, :, :] = np.clip(reachable_lane_predicted_node_a_softmax[..., np.newaxis], 0, 1) * 255
+        Image.fromarray(reachable_lane_predicted_image_a.astype(np.uint8)).save(os.path.join(visualize_output_path, f"reachable_lane_predicted_a_{step}_{i}.jpg"))
+        reachable_lane_predicted_image_b = np.zeros((image_size, image_size, 3))
+        reachable_lane_predicted_image_b[:, :, :] = np.clip(reachable_lane_predicted_node_b_softmax[..., np.newaxis], 0, 1) * 255
+        Image.fromarray(reachable_lane_predicted_image_b.astype(np.uint8)).save(os.path.join(visualize_output_path, f"reachable_lane_predicted_b_{step}_{i}.jpg"))
+        

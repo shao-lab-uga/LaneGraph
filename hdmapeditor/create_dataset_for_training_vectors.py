@@ -246,7 +246,7 @@ for region in regions:
                                 and y < 2048
                                 and mask[y, x, 0] > 127
                             ):
-                                vertices.append([x, y])
+                                vertices.append((x, y))
                                 pass
                             else:
                                 outOfRange = True
@@ -266,7 +266,7 @@ for region in regions:
                             and y < 2048 - 0
                             and mask[y, x, 0] > 127
                         ):
-                            localnodes[nid] = [x, y]
+                            localnodes[nid] = (x, y)
 
                     json.dump(
                         [nidmap, localnodes, locallinks, find_centers(nidmap, localnodes, 200)],

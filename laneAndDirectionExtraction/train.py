@@ -5,11 +5,11 @@ import einops
 import warnings
 warnings.filterwarnings("ignore")
 from model import UnetResnet34
-from lane_and_direction_loss import LaneAndDirectionExtractionLoss
+from laneAndDirectionExtraction.lane_and_direction_extraction_loss import LaneAndDirectionExtractionLoss
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
 from laneAndDirectionExtraction.dataloader import get_dataloaders
-from utils.inference_utils import visualizatize_lane_and_direction
+from utils.inference_utils import visualize_lane_and_direction
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 def setup(config, gpu_id):
@@ -163,7 +163,7 @@ def model_training(gpu_id, world_size, config):
                     lane_predicted = lane_predicted.detach().cpu().numpy()
                     direction_predicted = einops.rearrange(direction_predicted, 'b c h w -> b h w c')
                     direction_predicted = direction_predicted.detach().cpu().numpy()
-                    visualizatize_lane_and_direction(visualize_output_path, global_step,
+                    visualize_lane_and_direction(visualize_output_path, global_step,
                                                     input_satellite_image=input_image,
                                                     region_mask=region_mask,
                                                     lane_predicted=lane_predicted,

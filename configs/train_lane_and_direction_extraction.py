@@ -3,7 +3,7 @@ from utils.config_utils import load_config
 # ============= Seed ===================
 random_seed = 42
 # ============= Path ===================
-project_name = 'LaneAndDirectionExtractionEvaluation'  # Name of the project
+project_name = 'LaneAndDirectionExtractionEvaluation'
 exp_dir = './exp/'  # PATH TO YOUR EXPERIMENT FOLDER
 project_dir = os.path.join(exp_dir, project_name)
 # ============= Dataset Parameters=================
@@ -21,15 +21,51 @@ testing_range = data_attributes_config.testing_range
 validation_range = data_attributes_config.validation_range
 # ============= Model Parameters =================
 
-# ============= Test Parameters =================
+# ============= Train Parameters =================
 num_machines = 1
-gpu_ids = [0]
+gpu_ids = [0,1]
 batch_size = 6
 preload_tiles=4
-guidance_scale = 7.5
 epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
-max_epochs = 1  # Total number of epochs to test
-weight_path = 'exp/LaneAndDirectionExtractionTraining/checkpoints/epoch_150.pth'
+max_epochs = 200  # Total number of epochs to train
+# ============= Optimizer Parameters =================
+optimizer_type = 'AdamW'
+optimizers_dic = dict(
+    AdamW=dict(
+        type='AdamW',       # AdamW optimizer
+        learning_rate=1e-3,            # Base learning rate
+        betas=(0.9, 0.95),  # Slightly higher β2 for smoother updates
+        eps=1e-8,           # Avoids division by zero
+        weight_decay=1e-6   # Encourages generalization
+    ),
+    NAdam=dict(
+        type='NAdam',       # NAdam optimizer
+        learning_rate = 1e-3,
+        weight_decay = 1e-4
+    )
+)
+assert optimizer_type in optimizers_dic, f"Optimizer type {optimizer_type} is not supported"
+# ============= Scheduler Parameters =================
+scheduler_type = 'StepLR'
+schedulers_dic = dict(
+    StepLR=dict(
+        type='StepLR',      # StepLR scheduler
+        step_size = max_epochs // 5,
+        gamma = 0.5
+    ),
+    CosineAnnealingWarmRestarts=dict(
+        type='CosineAnnealingWarmRestarts',  # CosineAnnealingWarmRestarts scheduler
+        T_0=max_epochs // 10,    # First restart at 10% of max_epochs
+        T_mult=2,  # Restart period doubles
+        eta_min=1e-6  # Minimum LR to avoid vanishing updates
+    )
+)
+assert scheduler_type in schedulers_dic, f"Scheduler type {scheduler_type} is not supported"
+
+
+# ============= Test Parameters =================
+guidance_scale = 7.5
+weight_path = None  # None is the last ckpt you have trained
 # ============= Config ===================
 config = dict(
     project_name=project_name,
@@ -65,16 +101,43 @@ config = dict(
         ),
     ),
     models=dict(
+        # avaiable settings = [
+            # ("resnet34", "fpn"),
+            # ("resnet50", "fpn"),
+            # ('vit_base_patch16_224.dino', 'vitdecoder'),
+        # ]
         lane_and_direction_extraction_model=dict(
+            in_channels = 3,  # Input channels for RGB images
             num_classes = 4,  # Output dimension for lane and direction extraction
         )
+        
     ),
-    test=dict(
-        checkpoint_path=weight_path,  # Path to the model checkpoint
-        max_epochs=max_epochs,
+    losses=dict(
+        lane_and_direction_loss=dict(
+            lane_cross_entropy_loss_weight=1.0,
+            lane_dice_loss_weight=0.3,
+            direction_l2_loss_weight=2.0,
+        ),
+    ),
+    optimizer = optimizers_dic[optimizer_type],
+    scheduler = schedulers_dic[scheduler_type],
+    train=dict(
         epoch_size=epoch_sisze,
+        max_epochs=max_epochs,
+        epoch_sisze=epoch_sisze,
+        checkpoint_interval=50,
+        checkpoint_dir=os.path.join(project_dir, 'checkpoints'),
         visualize_output_path=os.path.join(project_dir, 'visualizations'),
+        checkpoint_total_limit=10,
         log_interval=10,
     ),
+    test=dict(
 
+    ),
+    loggers=dict(
+        tensorboard=dict(
+            type='Tensorboard',
+            log_dir=os.path.join(project_dir, 'logs'),
+        ),
+    ),
 )
