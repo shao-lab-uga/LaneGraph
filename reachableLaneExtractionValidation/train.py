@@ -13,6 +13,10 @@ from utils.inference_utils import visualize_reachable_lane
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+
+from torch.amp import autocast, GradScaler
+
+
 def setup(config, gpu_id):
     """
     Setup the model, optimizer, scheduler, and losses.
@@ -72,7 +76,7 @@ def setup(config, gpu_id):
     return model, optimizer, scheduler, reachable_lane_extraction_loss
 
 def model_training(gpu_id, world_size, config):
-    
+    scaler = GradScaler(device=gpu_id)
     project_dir = config.project_dir
     dataloaders_config = config.dataloaders
     os.path.exists(project_dir) or os.makedirs(project_dir)
@@ -173,27 +177,33 @@ def model_training(gpu_id, world_size, config):
             input_features_node_a, input_features_node_b, input_features_validation, reachable_lane_groundtruth, reachable_label_groundtruth = parse_inputs(inputs)
 
 
+            with autocast(device_type='cuda', dtype=torch.float16):
+                # forward pass
+                reachable_lane_predicted_node_a, reachable_lane_predicted_node_b, reachable_label_predicted = model.forward(
+                    input_features_node_a=input_features_node_a,
+                    input_features_node_b=input_features_node_b,
+                    input_features_validation=input_features_validation
+                )
 
-            reachable_lane_predicted_node_a, reachable_lane_predicted_node_b, reachable_label_predicted = model.forward(
-                input_features_node_a=input_features_node_a,
-                input_features_node_b=input_features_node_b,
-                input_features_validation=input_features_validation
-            )
-
-            reachable_lane_extraction_loss_dic = reachable_lane_extraction_loss.compute(
-                reachable_lane_predicted_a= reachable_lane_predicted_node_a,
-                reachable_lane_predicted_b= reachable_lane_predicted_node_b,
-                reachable_lane_groundtruth_a= reachable_lane_groundtruth[:, 1:2, :, :],
-                reachable_lane_groundtruth_b= reachable_lane_groundtruth[:, 2:3, :, :],
-                reachable_label_predicted= reachable_label_predicted,
-                reachable_label_groundtruth= reachable_label_groundtruth,
-            )
-            loss_value = torch.sum(sum(reachable_lane_extraction_loss_dic.values()))
+                reachable_lane_extraction_loss_dic = reachable_lane_extraction_loss.compute(
+                    reachable_lane_predicted_a= reachable_lane_predicted_node_a,
+                    reachable_lane_predicted_b= reachable_lane_predicted_node_b,
+                    reachable_lane_groundtruth_a= reachable_lane_groundtruth[:, 1:2, :, :],
+                    reachable_lane_groundtruth_b= reachable_lane_groundtruth[:, 2:3, :, :],
+                    reachable_label_predicted= reachable_label_predicted,
+                    reachable_label_groundtruth= reachable_label_groundtruth,
+                )
+                loss_value = torch.sum(sum(reachable_lane_extraction_loss_dic.values()))
+                if torch.isnan(loss_value) or torch.isinf(loss_value):
+                    print("Loss is NaN or Inf, skipping this batch.")
+                    print(f"Loss value: {reachable_lane_extraction_loss_dic}")
+                    continue
             # backward pass
             optimizer.zero_grad()
-            loss_value.backward()
+            scaler.scale(loss_value).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             reachable_lane_extraction_loss.update(reachable_lane_extraction_loss_dic)
 
             global_step += 1
@@ -214,7 +224,7 @@ def model_training(gpu_id, world_size, config):
                                             direction_groundtruth= direction_context,
                                             visulize_all_samples=False,
                                             visualize_groundtruth=True)
-                    
+                    torch.cuda.empty_cache()
             if (global_step + 1) % 50 == 0:
                 train_dataloader.preload()
         scheduler.step()
