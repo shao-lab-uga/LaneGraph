@@ -31,7 +31,7 @@ class Dataloader:
         batch_size=8,
         preload_tiles=4,
         training=True,
-        maxbatchsize=16,
+        maxbatchsize=32,
     ):
         self.data_path = data_path
         self.indrange = indrange
@@ -91,8 +91,8 @@ class Dataloader:
     def _load_link_data(self, ind):
         """Load link data for a given index."""
         with open(os.path.join(self.data_path, f"link_{ind}.json"), "r") as json_file:
-            nidmap, localnodes, locallinks, centers = json.load(json_file)
-        return nidmap, localnodes, locallinks, centers
+            links = json.load(json_file)
+        return links
     
     def _apply_augmentation(self, images, tile_idx):
         """Apply color augmentation to images."""
@@ -125,30 +125,30 @@ class Dataloader:
         normal[:, :, 1] = new_normal_y
         return np.clip(normal, -0.9999, 0.9999)
     
-    def _rotate_and_filter_links_nodes(self, locallinks, nodes, angle, image_size):
-        """Rotate links and nodes by -angle and discard out-of-bounds ones."""
-        # Rotate and filter links
-        rotated_links = []
-        for link in locallinks:
-            rotated = []
-            out_of_bounds = False
-            for x, y in link:
-                px, py = rotate([x, y], -angle, image_size)
-                if not (0 <= px <= image_size and 0 <= py <= image_size):
-                    out_of_bounds = True
-                    break
-                rotated.append((px, py))
-            if not out_of_bounds:
-                rotated_links.append(rotated)
+    # def _rotate_and_filter_links_nodes(self, locallinks, nodes, angle, image_size):
+    #     """Rotate links and nodes by -angle and discard out-of-bounds ones."""
+    #     # Rotate and filter links
+    #     rotated_links = []
+    #     for link in locallinks:
+    #         rotated = []
+    #         out_of_bounds = False
+    #         for x, y in link:
+    #             px, py = rotate([x, y], -angle, image_size)
+    #             if not (0 <= px <= image_size and 0 <= py <= image_size):
+    #                 out_of_bounds = True
+    #                 break
+    #             rotated.append((px, py))
+    #         if not out_of_bounds:
+    #             rotated_links.append(rotated)
 
-        # Rotate and filter nodes
-        rotated_nodes = {}
-        for nid, (x, y) in nodes.items():
-            px, py = rotate([x, y], -angle, image_size)
-            if 0 <= px <= image_size and 0 <= py <= image_size:
-                rotated_nodes[nid] = (px, py)
+    #     # Rotate and filter nodes
+    #     rotated_nodes = {}
+    #     for nid, (x, y) in nodes.items():
+    #         px, py = rotate([x, y], -angle, image_size)
+    #         if 0 <= px <= image_size and 0 <= py <= image_size:
+    #             rotated_nodes[nid] = (px, py)
 
-        return rotated_links, rotated_nodes
+    #     return rotated_links, rotated_nodes
     
     def preload(self, ind=None):
 
@@ -160,10 +160,10 @@ class Dataloader:
                 current_ind = random.choice(self.indrange) if ind is None else ind
                 
                 sat_img, mask, target, normal = self._load_image_data(current_ind)
-                nidmap, localnodes, locallinks, centers = self._load_link_data(current_ind)
+                links = self._load_link_data(current_ind)
 
-                if len(locallinks) == 0:
-                        continue
+                if len(links[2]) == 0:
+                    continue
 
                 # Convert to grayscale if needed
                 mask = self._convert_to_grayscale(mask)
@@ -177,38 +177,63 @@ class Dataloader:
                     sat_img, mask, target, normal = self._apply_rotation(sat_img, mask, target, normal, angle)
 
                     # Rotate and filter links
-                    rotated_links, rotated_nodes = self._rotate_and_filter_links_nodes(
-                        locallinks, localnodes, angle, self.dataset_image_size
-                    )
-                    if not rotated_links or not rotated_nodes:
-                        continue
-                    localnodes = rotated_nodes
-                    locallinks = rotated_links
+                    nidmap, nodes, locallinks, centers = links
+                    newlocallinks = []
+                    for locallink in locallinks:
+                        oor = False
+                        newlocallink = []
+                        for k in range(len(locallink)):
+                            pos = [locallink[k][0], locallink[k][1]]
+                            pos = rotate(pos, -angle, self.dataset_image_size) 
+                            if pos[0] < 0 or pos[0] > self.dataset_image_size or pos[1] < 0 or pos[1] > self.dataset_image_size:
+                                oor = True
+                                break
+                            
+                            newlocallink.append(pos)
+
+                        if oor == False:
+                            newlocallinks.append(newlocallink)
+                    
+                    if len(newlocallinks) == 0:
+                        continue 
+                    
+                    links[2] = newlocallinks
+                            
+                    new_nodes = {}
+                    for k in nodes.keys():
+                        pos = nodes[k]
+                        pos = rotate(pos, -angle, self.dataset_image_size)
+                        if pos[0] < 0 or pos[0] > self.dataset_image_size or pos[1] < 0 or pos[1] > self.dataset_image_size:
+                            continue
+                        new_nodes[k] = pos
+
+                    if len(new_nodes) == 0:
+                        continue 
+
+                    links[1] = new_nodes
 
                 nid2links = {}
                 pos2nid = {}
-                for k in localnodes.keys():
-                    pos = localnodes[k]
+                for k in links[1].keys():
+                    pos = links[1][k]
                     pos2nid[(pos[0], pos[1])] = k
 
                     linkids = []
-                    for j in range(len(locallinks)):
-                        if (locallinks[j][0][0] == pos[0] and locallinks[j][0][1] == pos[1]) or (locallinks[j][-1][0] == pos[0] and locallinks[j][-1][1] == pos[1]):
+                    for j in range(len(links[2])):
+                        if (links[2][j][0][0] == pos[0] and links[2][j][0][1] == pos[1]) or (links[2][j][-1][0] == pos[0] and links[2][j][-1][1] == pos[1]):
                             linkids.append(j)
                     nid2links[k] = list(linkids)
                 
                 self.nid2links.append(nid2links)
                 self.pos2nid.append(pos2nid)
 
-                links = [nidmap, localnodes, locallinks, centers]
-                self.links.append(links)
-
                 normal = self._process_normal_map(normal, angle)
                 # Normalize images
                 sat_img = sat_img.astype(np.float64) / 255.0 - 0.5
                 mask = mask.astype(np.float64) / 255.0
                 target = target.astype(np.float64) / 255.0
-
+                
+                self.links.append(links)
                 self.images[i, :, :, :] = sat_img
                 self.masks[i, :, :, 0] = mask
                 self.targets[i, :, :, 0] = target
@@ -239,19 +264,21 @@ class Dataloader:
 
                 # sample two in-connected points
                 # sample two connected points
-                coin = random.randint(0,1)
+                is_connected = random.randint(0,1)
 
-                #print(i, tile_id, coin)
-                if coin == 0:
+                if is_connected == 0:
                     locallink = random.choice(locallinks)
                     vertices = locallink
+                    # Hotfix: Check if the vertices are in the pos2nid
+                    if (vertices[0][0], vertices[0][1]) not in  self.pos2nid[tile_id]:
+                        continue
+                    
+                    if (vertices[-1][0], vertices[-1][1]) not in  self.pos2nid[tile_id]:
+                        continue
 
                     sr = (vertices[0][1] + vertices[-1][1]) // 2
                     sc = (vertices[0][0] + vertices[-1][0]) // 2
-
-                    # sr += random.randint(-50,50)
-                    # sc += random.randint(-50,50)
-
+                    
                     sr -= self.image_size // 2
                     sc -= self.image_size // 2
 
@@ -266,21 +293,9 @@ class Dataloader:
                         sc = self.dataset_image_size - self.image_size - 8
                     
                     img = img * 0
-                    #connector = connector * 0
-
                     connector1 = connector1 * 0
                     connector2 = connector2 * 0
-
-
-                    #st = random.randint(st-1,st+1)
-                    #ed = random.randint(ed-1,ed+1)
-
-                    # if st < 0:
-                    # 	st = 0
-
-                    # if ed >= len(vertices):
-                    # 	ed = len(vertices) - 1
-
+                    
                     for k in range(len(vertices)-1):
                         x1 = vertices[k][0] - sc 
                         y1 = vertices[k][1] - sr 
@@ -330,7 +345,7 @@ class Dataloader:
                     #self.target_t_batch[i,:,:,0] = self.targets_t[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, 0] 
                     self.normal_batch[i,:,:,:] = self.normal[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
                     
-
+                    
                     # draw two segmentations
                     nid1 = self.pos2nid[tile_id][(vertices[0][0],vertices[0][1])]
                     nid2 = self.pos2nid[tile_id][(vertices[-1][0],vertices[-1][1])]
@@ -361,8 +376,6 @@ class Dataloader:
                     
                     self.target_batch[i,:,:,2] = np.copy(img) / 255.0
 
-
-
                 else:
                     nid1 = random.choice(list(nodes.keys()))
                     candidate = []
@@ -389,9 +402,6 @@ class Dataloader:
                     sr = (pos1[1] + pos2[1]) // 2
                     sc = (pos1[0] + pos2[0]) // 2
 
-                    # sr += random.randint(-50,50)
-                    # sc += random.randint(-50,50)
-
                     sr -= self.image_size // 2
                     sc -= self.image_size // 2
 
@@ -415,14 +425,8 @@ class Dataloader:
                     x2 = pos2[0] - sc 
                     y2 = pos2[1] - sr
 
-                    #print(x1,y1,x2,y2)
-
                     cv2.circle(connector1, (x1,y1), 12, (255), -1)
                     cv2.circle(connector2, (x2,y2), 12, (255), -1)
-
-                    #connectorlink *= 0
-                    #cv2.line(connectorlink, (x1,y1), (x2,y2), (255),8)
-
 
                     self.connector_batch[i,:,:,0] = np.copy(connector1) / 255.0 - 0.5
                     self.connector_batch[i,:,:,3] = np.copy(connector2) / 255.0 - 0.5
@@ -433,16 +437,12 @@ class Dataloader:
 
 
                     self.target_batch[i,:,:,0] = np.copy(img) / 255.0
-                    #self.connector_batch[i,:,:,0] = np.copy(connector) / 255.0
                     self.target_label_batch[i,0] = 0
 
-                    self.image_batch[i,:,:,:] = self.images[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
-                    #self.target_t_batch[i,:,:,0] = self.targets_t[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, 0] 
+                    self.image_batch[i,:,:,:] = self.images[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :] 
                     self.normal_batch[i,:,:,:] = self.normal[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
                     
 
-                    #nid1 = self.pos2nid[tile_id][(vertices[0][0],vertices[0][1])]
-                    #nid2 = self.pos2nid[tile_id][(vertices[-1][0],vertices[-1][1])]
 
                     img = img * 0 
                     for linkid in self.nid2links[tile_id][nid1]:

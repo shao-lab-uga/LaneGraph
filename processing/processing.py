@@ -12,7 +12,7 @@ import cv2
 import networkx as nx
 import numpy as np
 import plotly.express as px  # noqa
-import s2g
+import processing.segmentation2graph as segmentation2graph
 from skimage import morphology
 
 from app.code_torch.framework.base_classes import SimpleConfig
@@ -93,8 +93,8 @@ class InferenceEngine:
 
         lane_out = morphology.thin(lane_out)
 
-        lane_graph = s2g.extract_graph_from_image(lane_out, epsilon=5.0)
-        lane_graph = s2g.direct_graph_from_vector_map(lane_graph, normal_out)
+        lane_graph = segmentation2graph.extract_graph_from_image(lane_out, epsilon=5.0)
+        lane_graph = segmentation2graph.direct_graph_from_vector_map(lane_graph, normal_out)
 
         return lane_graph
 
@@ -157,10 +157,10 @@ class InferenceEngine:
         in_img = cv2.imread(str(intersection_image_path))
 
         lane_graph = self.process_lane_ex(intersection_image_path)
-        lane_out, normal_out = s2g.draw_inputs(lane_graph)
+        lane_out, normal_out = segmentation2graph.draw_inputs(lane_graph)
 
-        lane_graph = s2g.annotate_node_types(lane_graph, intersection_center)
-        node_types = s2g.get_node_types(lane_graph)
+        lane_graph = segmentation2graph.annotate_node_types(lane_graph, intersection_center)
+        node_types = segmentation2graph.get_node_types(lane_graph)
 
         in_nodes = node_types.get("in", [])
         out_nodes = node_types.get("out", [])

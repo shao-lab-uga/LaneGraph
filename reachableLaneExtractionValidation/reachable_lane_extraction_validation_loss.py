@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 from torchmetrics import MeanMetric
 
 class ReachableLaneExtractionValidationLoss():
@@ -54,16 +55,18 @@ class ReachableLaneExtractionValidationLoss():
             reachable_lane_predicted_b: [B, 2, H, W] (raw logits for lane B)
             reachable_lane_groundtruth_a: [B, 1, H, W] (ground truth for lane A)
             reachable_lane_groundtruth_b: [B, 1, H, W] (ground truth for lane B)
-            reachable_label_predicted: [B, 1] (raw logits for reachable label)
+            reachable_label_predicted: [B, 2] (raw logits for reachable label)
             reachable_label_groundtruth: [B, 1] (ground truth for reachable label)
         Returns:
             loss: scalar tensor representing the total loss
         """
         
-        lane_cross_entropy_loss = self.cross_entropy_loss(reachable_lane_predicted_a, reachable_lane_groundtruth_a) + self.cross_entropy_loss(reachable_lane_predicted_b, reachable_lane_groundtruth_b)
+        
         # Compute the dice loss for lane predictions
         lane_dice_loss = self.dice_loss(reachable_lane_predicted_a, reachable_lane_groundtruth_a) + self.dice_loss(reachable_lane_predicted_b, reachable_lane_groundtruth_b)
+        lane_cross_entropy_loss = self.cross_entropy_loss(reachable_lane_predicted_a, reachable_lane_groundtruth_a) + self.cross_entropy_loss(reachable_lane_predicted_b, reachable_lane_groundtruth_b)
         # Combine losses into a dictionary
+        
         loss_dict = {
             'lane_cross_entropy_loss': lane_cross_entropy_loss * self.lane_cross_entropy_loss_weight,
             'lane_dice_loss': lane_dice_loss * self.lane_dice_loss_weight,
@@ -91,7 +94,7 @@ class ReachableLaneExtractionValidationLoss():
         p1 = logits[:, 1:2]  # logits for class 1 which is the non-lane
 
         # Numerically stable log-sum-exp formulation of softmax cross-entropy
-        logsumexp = torch.log(torch.exp(p0) + torch.exp(p1))
+        logsumexp = torch.logsumexp(logits, dim=1, keepdim=True)
         loss = -(targets * p0 + (1 - targets) * p1 - logsumexp)
 
         return torch.mean(loss)

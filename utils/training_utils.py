@@ -7,11 +7,11 @@ def save_checkpoint(model, optimizer, scheduler, epoch, global_step, checkpoint_
     Save model checkpoint
     """
     os.path.exists(checkpoint_dir) or os.makedirs(checkpoint_dir)
-
+    
     torch.save({
         'epoch': epoch,
         'global_step': global_step,
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': {k: v.cpu() for k, v in model.state_dict().items()},
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
     }, os.path.join(checkpoint_dir + f'/epoch_{epoch+1}.pth'))
@@ -40,7 +40,7 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_dir, gpu_id):
     """
     checkpoint_path = get_last_file_with_extension(checkpoint_dir, '.pth')
     if checkpoint_path is not None:
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=f'cuda:{gpu_id}')
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])

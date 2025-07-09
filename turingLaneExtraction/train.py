@@ -4,12 +4,12 @@ import argparse
 import einops
 import warnings
 warnings.filterwarnings("ignore")
-from model import ReachableLaneExtractionAndValidation
-from reachableLaneExtractionValidation.reachable_lane_extraction_validation_loss import ReachableLaneExtractionValidationLoss
+from model import LaneExtractionModel
+from turning_lane_extraction_loss import TurningLaneExtractionLoss
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
 from reachableLaneExtractionValidation.dataloader import get_dataloaders
-from utils.inference_utils import visualize_reachable_lane
+from utils.inference_utils import visualize_lane
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
@@ -21,9 +21,8 @@ def setup(config, gpu_id):
     """
     # //[ ] The model config need to be updated if the model is changed
     model_config = config.models
-    model = ReachableLaneExtractionAndValidation(
-        model_config.reachable_lane_extraction_model,
-        model_config.reachable_lane_validation_model
+    model = LaneExtractionModel(
+        model_config.lane_extraction_model,
         ).to(gpu_id)
 
     # Load the optimizer
@@ -65,13 +64,13 @@ def setup(config, gpu_id):
     scheduler = get_scheduler(scheduler_config)
     # Get the losses config
     config_losses = config.losses
-    reachable_lane_extraction_loss_config = config_losses.reachable_lane_extraction_loss
+    lane_extraction_loss_config = config_losses.lane_extraction_loss
 
-    reachable_lane_extraction_loss = ReachableLaneExtractionValidationLoss(
+    lane_extraction_loss = TurningLaneExtractionLoss(
         device=gpu_id, 
-        config=reachable_lane_extraction_loss_config
+        config=lane_extraction_loss_config
     )
-    return model, optimizer, scheduler, reachable_lane_extraction_loss
+    return model, optimizer, scheduler, lane_extraction_loss
 
 def model_training(gpu_id, world_size, config):
     # scaler = GradScaler(device=gpu_id)
@@ -95,7 +94,7 @@ def model_training(gpu_id, world_size, config):
     tensorboard_config = logger_config.tensorboard
     logger = SummaryWriter(log_dir=tensorboard_config.log_dir)
 
-    model, optimizer, scheduler, reachable_lane_extraction_loss = setup(config, gpu_id)
+    model, optimizer, scheduler, lane_extraction_loss = setup(config, gpu_id)
     continue_ep, global_step = load_checkpoint(model, optimizer, scheduler, checkpoint_dir, gpu_id)
     
 
@@ -106,8 +105,6 @@ def model_training(gpu_id, world_size, config):
             continue
         
         model.train()
-        lane_label_correct = []
-        lane_label_total = []
         for batch_idx in tqdm(range(epoch_sisze)):
             inputs = train_dataloader.get_batch()
             def parse_inputs(inputs):   
@@ -121,14 +118,11 @@ def model_training(gpu_id, world_size, config):
                         connector_features[0:3] are features for the node A,
                         connector_features[3:6] are features for the node B,
                         Note: connector_features[6] is deprecated.
-                    reachable_lane_groundtruth: The ground truth for lane [B, 3, H, W].
-                        reachable_lane_groundtruth[1:2] are reachable lane for the node A,
-                        reachable_lane_groundtruth[2:3] are reachable lane for the node B,
-                    reachable_label_groundtruth: The ground truth for reachable label [B, 1].
+                    lane_groundtruth: The ground truth for lane [B, 1, H, W].
+                        lane_groundtruth[0:1] are the ground truth for the lane.
                     direction_groundtruth: The ground truth for direction [B, 2, H, W].
                 """
-                                    # def train(self, x_in, x_connector, target, target_label, context, lr):
-                input_image, connector_features, reachable_lane_groundtruth, reachable_label_groundtruth, direction_context = inputs
+                input_image, connector_features, lane_groundtruth, direction_context = inputs
                 batch_size, image_size, _, _ = input_image.shape
                 position_encoding = np.zeros((batch_size, image_size, image_size, 2))
                 for i in range(image_size):
@@ -141,10 +135,8 @@ def model_training(gpu_id, world_size, config):
                 connector_features = torch.from_numpy(connector_features).float().to(gpu_id)  # [B, H, W, 1]
                 connector_features = einops.rearrange(connector_features, 'b h w c -> b c h w')  # [B, 1, H, W]
 
-                reachable_lane_groundtruth = torch.from_numpy(reachable_lane_groundtruth).float().to(gpu_id) # [B, H, W, 3]
-                reachable_lane_groundtruth = einops.rearrange(reachable_lane_groundtruth, 'b h w c -> b c h w')  # [B, 3, H, W]
-
-                reachable_label_groundtruth = torch.from_numpy(reachable_label_groundtruth).float().to(gpu_id)  # [B, 1]
+                lane_groundtruth = torch.from_numpy(lane_groundtruth).float().to(gpu_id) # [B, H, W, 1]
+                lane_groundtruth = einops.rearrange(lane_groundtruth, 'b h w c -> b c h w')  # [B, 1, H, W]
 
                 direction_context = torch.from_numpy(direction_context).float().to(gpu_id)  # [B, H, W, 2]
                 direction_context = einops.rearrange(direction_context, 'b h w c -> b c h w')  # [B, 2, H, W]
@@ -152,79 +144,32 @@ def model_training(gpu_id, world_size, config):
                 position_encoding = torch.from_numpy(position_encoding).float().to(gpu_id)  # [B, H, W, 2]
                 position_encoding = einops.rearrange(position_encoding, 'b h w c -> b c h w') # [B, 2, H, W]
 
-                input_features_node_a = torch.cat([
-                    input_image,
-                    connector_features[:, 0:3, :, :],  # Features for node A
-                    direction_context,
-                    position_encoding
-                    ], dim=1)
 
-                input_features_node_b = torch.cat([
+                input_features_node= torch.cat([
                     input_image,
-                    connector_features[:, 3:6,:, :],  # Features for node B
+                    connector_features,  # Features for nodes
                     direction_context,
                     position_encoding
                     ], dim=1)
                 
-                input_features_validation = torch.cat([
-                    connector_features,  # Features for both nodes
-                    direction_context,
-                    position_encoding
-                ], dim=1)
 
-                return input_features_node_a, input_features_node_b, input_features_validation, reachable_lane_groundtruth, reachable_label_groundtruth
+                return input_features_node, lane_groundtruth
 
-            input_features_node_a, input_features_node_b, input_features_validation, reachable_lane_groundtruth, reachable_label_groundtruth = parse_inputs(inputs)
+            input_features_node, lane_groundtruth = parse_inputs(inputs)
 
 
             # forward pass
-            reachable_lane_predicted_node_a, reachable_lane_predicted_node_b, reachable_label_predicted = model.forward(
-                input_features_node_a=input_features_node_a,
-                input_features_node_b=input_features_node_b,
-                input_features_validation=input_features_validation
+            lane_predicted= model.forward(
+                input_features_node=input_features_node,
             )
-            reachable_lane_extraction_loss_dic = reachable_lane_extraction_loss.compute(
-                reachable_lane_predicted_a= reachable_lane_predicted_node_a,
-                reachable_lane_predicted_b= reachable_lane_predicted_node_b,
-                reachable_lane_groundtruth_a= reachable_lane_groundtruth[:, 1:2, :, :],
-                reachable_lane_groundtruth_b= reachable_lane_groundtruth[:, 2:3, :, :],
-                reachable_label_predicted= reachable_label_predicted,
-                reachable_label_groundtruth= reachable_label_groundtruth,
+            lane_extraction_loss_dic = lane_extraction_loss.compute(
+                lane_predicted= lane_predicted,
+                lane_groundtruth= lane_groundtruth,
             )
-            loss_value = torch.sum(sum(reachable_lane_extraction_loss_dic.values()))
-
-        
-            def compute_lane_label_accuracy(reachable_label_predicted, reachable_label_groundtruth):
-                """
-                Compute the accuracy of the reachable lane label.
-
-                Args:
-                    reachable_label_predicted (Tensor): The predicted logits of shape [B, 2].
-                        If predicted[:, 0] > predicted[:, 1], the predicted label is 1, else 0.
-                    reachable_label_groundtruth (Tensor): Ground truth labels of shape [B, 1], with values 0 or 1.
-
-                Returns:
-                    accuracy (float): Classification accuracy between 0 and 1.
-                """
-                # Apply custom rule: predict 1 if logits[:, 0] > logits[:, 1], else 0
-                predicted_labels = (reachable_label_predicted[:, 0] > reachable_label_predicted[:, 1]).long()
-
-                # Squeeze ground truth to match shape [B]
-                groundtruth_labels = reachable_label_groundtruth.squeeze(1).long()
-
-                # Compare predictions with ground truth
-                correct = (predicted_labels == groundtruth_labels).sum().item()
-                total = groundtruth_labels.numel()
-
-                accuracy = correct / total if total > 0 else 0.0
-                return accuracy, correct, total
-            _, correct, total = compute_lane_label_accuracy(reachable_label_predicted, reachable_label_groundtruth)
-            
-            lane_label_correct.append(correct)
-            lane_label_total.append(total)
+            loss_value = torch.sum(sum(lane_extraction_loss_dic.values()))
             if torch.isnan(loss_value) or torch.isinf(loss_value):
                 print("Loss is NaN or Inf, skipping this batch.")
-                print(f"Loss value: {reachable_lane_extraction_loss_dic}")
+                print(f"Loss value: {lane_extraction_loss_dic}")
                 continue
             # backward pass
             optimizer.zero_grad()
@@ -234,33 +179,27 @@ def model_training(gpu_id, world_size, config):
             # scaler.step(optimizer)
             optimizer.step()
             # scaler.update()
-            reachable_lane_extraction_loss.update(reachable_lane_extraction_loss_dic)
+            lane_extraction_loss.update(lane_extraction_loss_dic)
 
             global_step += 1
-            lane_and_direction_loss_res_dict = reachable_lane_extraction_loss.get_result()
+            lane_loss_res_dict = lane_extraction_loss.get_result()
             if gpu_id == 0:
                 if batch_idx % log_interval == 0:
-                    logger.add_scalars(main_tag="lane_and_direction_loss", tag_scalar_dict=lane_and_direction_loss_res_dict, global_step=global_step)
-                    lane_label_accuracy = sum(lane_label_correct) / sum(lane_label_total)
-                    logger.add_scalars(main_tag="lane_label_accuracy", tag_scalar_dict={"lane_label_accuracy": lane_label_accuracy}, global_step=global_step)
-                    lane_label_correct = []
-                    lane_label_total = []
-                    input_image, connector_features, reachable_lane_groundtruth, reachable_label_groundtruth, direction_context = inputs
-                    reachable_lane_predicted_node_a = einops.rearrange(reachable_lane_predicted_node_a, 'b c h w -> b h w c')
-                    reachable_lane_predicted_node_a = reachable_lane_predicted_node_a.detach().cpu().numpy()
-                    reachable_lane_predicted_node_b = einops.rearrange(reachable_lane_predicted_node_b, 'b c h w -> b h w c')
-                    reachable_lane_predicted_node_b = reachable_lane_predicted_node_b.detach().cpu().numpy()
-                    visualize_reachable_lane(visualize_output_path, global_step,
+                    logger.add_scalars(main_tag="lane_loss", tag_scalar_dict=lane_loss_res_dict, global_step=global_step)
+                    input_image, connector_features, lane_groundtruth, direction_context = inputs
+                    lane_predicted = einops.rearrange(lane_predicted, 'b c h w -> b h w c')
+                    lane_predicted = lane_predicted.detach().cpu().numpy()
+                    visualize_lane(visualize_output_path, global_step,
                                             input_satellite_image=input_image,
-                                            reachable_lane_predicted_node_a=reachable_lane_predicted_node_a,
-                                            reachable_lane_predicted_node_b=reachable_lane_predicted_node_b,
-                                            reachable_lane_groundtruth=reachable_lane_groundtruth,
+                                            lane_predicted=lane_predicted,
+                                            lane_groundtruth=lane_groundtruth,
                                             direction_groundtruth= direction_context,
                                             visulize_all_samples=False,
                                             visualize_groundtruth=False)
             if (global_step + 1) % 20 == 0:
                 train_dataloader.preload()
         scheduler.step()
+        
         # [ ] Currently the validation is not implemented, but it can be added later.
         if gpu_id == 0:
             if (epoch+1) % checkpoint_interval == 0:
@@ -270,7 +209,7 @@ def model_training(gpu_id, world_size, config):
 if __name__ == "__main__":
     # ============= Parse Argument =============
     parser = argparse.ArgumentParser(description="options")
-    parser.add_argument("--config", type=str, default="configs/train_reachable_lane_extraction_validation.py", help="config file")
+    parser.add_argument("--config", type=str, default="configs/train_lane_extraction.py", help="config file")
     args = parser.parse_args()
     # ============= Load Configuration =============
     config = load_config(args.config)

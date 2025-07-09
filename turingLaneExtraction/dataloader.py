@@ -44,22 +44,12 @@ class Dataloader:
         self.images = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 3))
         self.normal = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 2))
         self.targets = np.zeros((preload_tiles, dataset_image_size, dataset_image_size, 1))
-        self.targets_t = np.zeros(
-            (preload_tiles, dataset_image_size, dataset_image_size, 1)
-        )
-        self.masks = np.ones((preload_tiles, dataset_image_size, dataset_image_size, 1))
         self.links = []
-        self.nid2links = []
-        self.pos2nid = []
-
         self.maxbatchsize = maxbatchsize
         self.image_batch = np.zeros((self.maxbatchsize, image_size, image_size, 3))
         self.normal_batch = np.zeros((self.maxbatchsize, image_size, image_size, 2))
-        self.target_batch = np.zeros((self.maxbatchsize, image_size, image_size, 3))
-        self.target_t_batch = np.zeros((self.maxbatchsize, image_size, image_size, 1))
+        self.target_batch = np.zeros((self.maxbatchsize, image_size, image_size, 1))
         self.connector_batch = np.zeros((self.maxbatchsize, image_size, image_size, 7))
-        self.target_label_batch = np.zeros((self.maxbatchsize, 1))
-        self.mask_batch = np.zeros((self.maxbatchsize, image_size, image_size, 1))
 
 
         self.poscode = np.zeros((image_size * 2, image_size * 2, 2))
@@ -91,8 +81,8 @@ class Dataloader:
     def _load_link_data(self, ind):
         """Load link data for a given index."""
         with open(os.path.join(self.data_path, f"link_{ind}.json"), "r") as json_file:
-            nidmap, localnodes, locallinks, centers = json.load(json_file)
-        return nidmap, localnodes, locallinks, centers
+            links = json.load(json_file)
+        return links
     
     def _apply_augmentation(self, images, tile_idx):
         """Apply color augmentation to images."""
@@ -125,45 +115,19 @@ class Dataloader:
         normal[:, :, 1] = new_normal_y
         return np.clip(normal, -0.9999, 0.9999)
     
-    def _rotate_and_filter_links_nodes(self, locallinks, nodes, angle, image_size):
-        """Rotate links and nodes by -angle and discard out-of-bounds ones."""
-        # Rotate and filter links
-        rotated_links = []
-        for link in locallinks:
-            rotated = []
-            out_of_bounds = False
-            for x, y in link:
-                px, py = rotate([x, y], -angle, image_size)
-                if not (0 <= px <= image_size and 0 <= py <= image_size):
-                    out_of_bounds = True
-                    break
-                rotated.append((px, py))
-            if not out_of_bounds:
-                rotated_links.append(rotated)
 
-        # Rotate and filter nodes
-        rotated_nodes = {}
-        for nid, (x, y) in nodes.items():
-            px, py = rotate([x, y], -angle, image_size)
-            if 0 <= px <= image_size and 0 <= py <= image_size:
-                rotated_nodes[nid] = (px, py)
-
-        return rotated_links, rotated_nodes
-    
     def preload(self, ind=None):
 
         self.links = []
-        self.nid2links = []
-        self.pos2nid = []
         for i in range(self.preload_tiles if ind is None else 1):
             while True:
                 current_ind = random.choice(self.indrange) if ind is None else ind
                 
                 sat_img, mask, target, normal = self._load_image_data(current_ind)
-                nidmap, localnodes, locallinks, centers = self._load_link_data(current_ind)
+                links = self._load_link_data(current_ind)
 
-                if len(locallinks) == 0:
-                        continue
+                if len(links[2]) == 0:
+                    continue
 
                 # Convert to grayscale if needed
                 mask = self._convert_to_grayscale(mask)
@@ -177,38 +141,48 @@ class Dataloader:
                     sat_img, mask, target, normal = self._apply_rotation(sat_img, mask, target, normal, angle)
 
                     # Rotate and filter links
-                    rotated_links, rotated_nodes = self._rotate_and_filter_links_nodes(
-                        locallinks, localnodes, angle, self.dataset_image_size
-                    )
-                    if not rotated_links or not rotated_nodes:
-                        continue
-                    localnodes = rotated_nodes
-                    locallinks = rotated_links
+                    nidmap, nodes, locallinks, centers = links
+                    newlocallinks = []
+                    for locallink in locallinks:
+                        oor = False
+                        newlocallink = []
+                        for k in range(len(locallink)):
+                            pos = [locallink[k][0], locallink[k][1]]
+                            pos = rotate(pos, -angle, self.dataset_image_size) 
+                            if pos[0] < 0 or pos[0] > self.dataset_image_size or pos[1] < 0 or pos[1] > self.dataset_image_size:
+                                oor = True
+                                break
+                            
+                            newlocallink.append(pos)
 
-                nid2links = {}
-                pos2nid = {}
-                for k in localnodes.keys():
-                    pos = localnodes[k]
-                    pos2nid[(pos[0], pos[1])] = k
+                        if oor == False:
+                            newlocallinks.append(newlocallink)
+                    
+                    if len(newlocallinks) == 0:
+                        continue 
+                    
+                    links[2] = newlocallinks
+                            
+                    new_nodes = {}
+                    for k in nodes.keys():
+                        pos = nodes[k]
+                        pos = rotate(pos, -angle, self.dataset_image_size)
+                        if pos[0] < 0 or pos[0] > self.dataset_image_size or pos[1] < 0 or pos[1] > self.dataset_image_size:
+                            continue
+                        new_nodes[k] = pos
 
-                    linkids = []
-                    for j in range(len(locallinks)):
-                        if (locallinks[j][0][0] == pos[0] and locallinks[j][0][1] == pos[1]) or (locallinks[j][-1][0] == pos[0] and locallinks[j][-1][1] == pos[1]):
-                            linkids.append(j)
-                    nid2links[k] = list(linkids)
-                
-                self.nid2links.append(nid2links)
-                self.pos2nid.append(pos2nid)
+                    if len(new_nodes) == 0:
+                        continue 
 
-                links = [nidmap, localnodes, locallinks, centers]
-                self.links.append(links)
+                    links[1] = new_nodes
 
                 normal = self._process_normal_map(normal, angle)
                 # Normalize images
                 sat_img = sat_img.astype(np.float64) / 255.0 - 0.5
                 mask = mask.astype(np.float64) / 255.0
                 target = target.astype(np.float64) / 255.0
-
+                
+                self.links.append(links)
                 self.images[i, :, :, :] = sat_img
                 self.masks[i, :, :, 0] = mask
                 self.targets[i, :, :, 0] = target
@@ -238,242 +212,62 @@ class Dataloader:
                     continue
 
                 # sample two in-connected points
-                # sample two connected points
-                coin = random.randint(0,1)
-
-                #print(i, tile_id, coin)
-                if coin == 0:
-                    locallink = random.choice(locallinks)
-                    vertices = locallink
-
-                    sr = (vertices[0][1] + vertices[-1][1]) // 2
-                    sc = (vertices[0][0] + vertices[-1][0]) // 2
-
-                    # sr += random.randint(-50,50)
-                    # sc += random.randint(-50,50)
-
-                    sr -= self.image_size // 2
-                    sc -= self.image_size // 2
-
-                    if sr < 8: 
-                        sr = 8 
-                    if sr + self.image_size >= self.dataset_image_size - 8:
-                        sr = self.dataset_image_size - self.image_size - 8
-
-                    if sc < 8: 
-                        sc = 8 
-                    if sc + self.image_size >= self.dataset_image_size - 8:
-                        sc = self.dataset_image_size - self.image_size - 8
-                    
-                    img = img * 0
-                    #connector = connector * 0
-
-                    connector1 = connector1 * 0
-                    connector2 = connector2 * 0
-
-
-                    #st = random.randint(st-1,st+1)
-                    #ed = random.randint(ed-1,ed+1)
-
-                    # if st < 0:
-                    # 	st = 0
-
-                    # if ed >= len(vertices):
-                    # 	ed = len(vertices) - 1
-
-                    for k in range(len(vertices)-1):
-                        x1 = vertices[k][0] - sc 
-                        y1 = vertices[k][1] - sr 
-                        x2 = vertices[k+1][0] - sc 
-                        y2 = vertices[k+1][1] - sr 
-
-                        cv2.line(img, (x1,y1), (x2,y2), (255), 5)
-
-                        if k == 0:
-                            cv2.circle(connector1, (x1,y1), 12, (255), -1)
-                            xx1, yy1 = x1, y1
-                            #print(x1,y1)
-                        if k == len(vertices)-2:
-                            xx2, yy2 = x2, y2
-                            cv2.circle(connector2, (x2,y2), 12, (255), -1)
-                            #print(x2,y2)
-
-                    x1,y1 = xx1,yy1
-                    x2,y2 = xx2,yy2
-
-                    if x1 < 0 or x1 >= self.image_size or x2 < 0 or x2 >= self.image_size:
-                        continue
-                    if y1 < 0 or y1 >= self.image_size or y2 < 0 or y2 >= self.image_size:
-                        continue
+                locallink = random.choice(locallinks)
+                vertices = locallink
+                sr = (vertices[0][1] + vertices[-1][1]) // 2
+                sc = (vertices[0][0] + vertices[-1][0]) // 2
                 
-                    #connectorlink *= 0
-                    #cv2.line(connectorlink, (x1,y1), (x2,y2), (255),8)
-
-
-                    self.target_batch[i,:,:,0] = np.copy(img) / 255.0
-
-                    self.connector_batch[i,:,:,0] = np.copy(connector1) / 255.0 - 0.5
-                    self.connector_batch[i,:,:,3] = np.copy(connector2) / 255.0 - 0.5
-                    self.connector_batch[i,:,:,1:3] = self.poscode[self.image_size - y1:self.image_size*2 - y1, self.image_size - x1:self.image_size*2 - x1, :]
-                    self.connector_batch[i,:,:,4:6] = self.poscode[self.image_size - y2:self.image_size*2 - y2, self.image_size - x2:self.image_size*2 - x2, :]
-                    self.connector_batch[i,:,:,6] = np.copy(connectorlink) / 255.0 - 0.5
-
-                    self.target_label_batch[i,0] = 1
-                    
-                    # add a random offset here
-                    bx = random.randint(-8, 8)
-                    by = random.randint(-8, 8)
-
-                    self.image_batch[i,:,:,:] = self.images[tile_id, sr+bx:sr+bx+self.image_size, sc+by:sc+by+self.image_size, :]
-                    
-                    
-                    #self.target_t_batch[i,:,:,0] = self.targets_t[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, 0] 
-                    self.normal_batch[i,:,:,:] = self.normal[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
-                    
-
-                    # draw two segmentations
-                    nid1 = self.pos2nid[tile_id][(vertices[0][0],vertices[0][1])]
-                    nid2 = self.pos2nid[tile_id][(vertices[-1][0],vertices[-1][1])]
-
-                    img = img * 0 
-                    for linkid in self.nid2links[tile_id][nid1]:
-                        vertices = self.links[tile_id][2][linkid]
-                        for k in range(len(vertices)-1):
-                            x1_ = vertices[k][0] - sc 
-                            y1_ = vertices[k][1] - sr 
-                            x2_ = vertices[k+1][0] - sc 
-                            y2_ = vertices[k+1][1] - sr 
-
-                            cv2.line(img, (x1_,y1_), (x2_,y2_), (255), 5)
-                    
-                    self.target_batch[i,:,:,1] = np.copy(img) / 255.0
-
-                    img = img * 0 
-                    for linkid in self.nid2links[tile_id][nid2]:
-                        vertices = self.links[tile_id][2][linkid]
-                        for k in range(len(vertices)-1):
-                            x1_ = vertices[k][0] - sc 
-                            y1_ = vertices[k][1] - sr 
-                            x2_ = vertices[k+1][0] - sc 
-                            y2_ = vertices[k+1][1] - sr 
-
-                            cv2.line(img, (x1_,y1_), (x2_,y2_), (255), 5)
-                    
-                    self.target_batch[i,:,:,2] = np.copy(img) / 255.0
-
-
-
-                else:
-                    nid1 = random.choice(list(nodes.keys()))
-                    candidate = []
-                    pos1 = nodes[nid1]
-                    for nid2, pos2 in nodes.items():
-                        if nid2 == nid1:
-                            continue
-
-                        if nid2 in nidmap[nid1]:
-                            continue
-                        
-                        r = 8 * 70 # was 8 * 40
-                        D = (pos2[0] - pos1[0]) ** 2 + abs(pos2[1] - pos1[1]) ** 2
-                        if D > r**2:
-                            continue
-                        
-                        candidate.append([nid2, pos2])
-                    
-                    if len(candidate) == 0:
-                        continue
-
-                    nid2, pos2 = random.choice(candidate)
-
-                    sr = (pos1[1] + pos2[1]) // 2
-                    sc = (pos1[0] + pos2[0]) // 2
-
-                    # sr += random.randint(-50,50)
-                    # sc += random.randint(-50,50)
-
-                    sr -= self.image_size // 2
-                    sc -= self.image_size // 2
-
-                    if sr < 0: 
-                        sr = 0 
-                    if sr + self.image_size >= self.dataset_image_size:
-                        sr = self.dataset_image_size - self.image_size
-
-                    if sc < 0: 
-                        sc = 0 
-                    if sc + self.image_size >= self.dataset_image_size:
-                        sc = self.dataset_image_size - self.image_size
-                            
-
-                    img = img * 0
-                    connector1 = connector1 * 0
-                    connector2 = connector2 * 0
-
-                    x1 = pos1[0] - sc 
-                    y1 = pos1[1] - sr 
-                    x2 = pos2[0] - sc 
-                    y2 = pos2[1] - sr
-
-                    #print(x1,y1,x2,y2)
-
-                    cv2.circle(connector1, (x1,y1), 12, (255), -1)
-                    cv2.circle(connector2, (x2,y2), 12, (255), -1)
-
-                    #connectorlink *= 0
-                    #cv2.line(connectorlink, (x1,y1), (x2,y2), (255),8)
-
-
-                    self.connector_batch[i,:,:,0] = np.copy(connector1) / 255.0 - 0.5
-                    self.connector_batch[i,:,:,3] = np.copy(connector2) / 255.0 - 0.5
-                    self.connector_batch[i,:,:,1:3] = self.poscode[self.image_size - y1:self.image_size*2 - y1, self.image_size - x1:self.image_size*2 - x1, :]
-                    self.connector_batch[i,:,:,4:6] = self.poscode[self.image_size - y2:self.image_size*2 - y2, self.image_size - x2:self.image_size*2 - x2, :]
-                    self.connector_batch[i,:,:,6] = np.copy(connectorlink) / 255.0 - 0.5
-
-
-
-                    self.target_batch[i,:,:,0] = np.copy(img) / 255.0
-                    #self.connector_batch[i,:,:,0] = np.copy(connector) / 255.0
-                    self.target_label_batch[i,0] = 0
-
-                    self.image_batch[i,:,:,:] = self.images[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
-                    #self.target_t_batch[i,:,:,0] = self.targets_t[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, 0] 
-                    self.normal_batch[i,:,:,:] = self.normal[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
-                    
-
-                    #nid1 = self.pos2nid[tile_id][(vertices[0][0],vertices[0][1])]
-                    #nid2 = self.pos2nid[tile_id][(vertices[-1][0],vertices[-1][1])]
-
-                    img = img * 0 
-                    for linkid in self.nid2links[tile_id][nid1]:
-                        vertices = self.links[tile_id][2][linkid]
-                        for k in range(len(vertices)-1):
-                            x1_ = vertices[k][0] - sc 
-                            y1_ = vertices[k][1] - sr 
-                            x2_ = vertices[k+1][0] - sc 
-                            y2_ = vertices[k+1][1] - sr 
-
-                            cv2.line(img, (x1_,y1_), (x2_,y2_), (255), 5)
-                    
-                    self.target_batch[i,:,:,1] = np.copy(img) / 255.0
-
-                    img = img * 0 
-                    for linkid in self.nid2links[tile_id][nid2]:
-                        vertices = self.links[tile_id][2][linkid]
-                        for k in range(len(vertices)-1):
-                            x1_ = vertices[k][0] - sc 
-                            y1_ = vertices[k][1] - sr 
-                            x2_ = vertices[k+1][0] - sc 
-                            y2_ = vertices[k+1][1] - sr 
-
-                            cv2.line(img, (x1_,y1_), (x2_,y2_), (255), 5)
-                    
-                    self.target_batch[i,:,:,2] = np.copy(img) / 255.0
-                #print("we reach here")		
+                sr -= self.image_size // 2
+                sc -= self.image_size // 2
+                if sr < 0: 
+                    sr = 0 
+                if sr + self.image_size >= self.dataset_image_size:
+                    sr = self.dataset_image_size - self.image_size
+                if sc < 0: 
+                    sc = 0 
+                if sc + self.image_size >= self.dataset_image_size:
+                    sc = self.dataset_image_size - self.image_size
+                
+                img = img * 0
+                connector1 = connector1 * 0
+                connector2 = connector2 * 0
+                
+                for k in range(len(vertices)-1):
+                    x1 = vertices[k][0] - sc 
+                    y1 = vertices[k][1] - sr 
+                    x2 = vertices[k+1][0] - sc 
+                    y2 = vertices[k+1][1] - sr 
+                    cv2.line(img, (x1,y1), (x2,y2), (255), 5)
+                    if k == 0:
+                        cv2.circle(connector1, (x1,y1), 12, (255), -1)
+                        xx1, yy1 = x1, y1
+                        #print(x1,y1)
+                    if k == len(vertices)-2:
+                        xx2, yy2 = x2, y2
+                        cv2.circle(connector2, (x2,y2), 12, (255), -1)
+                        #print(x2,y2)
+                x1,y1 = xx1,yy1
+                x2,y2 = xx2,yy2
+                if x1 < 0 or x1 >= self.image_size or x2 < 0 or x2 >= self.image_size:
+                    continue
+                if y1 < 0 or y1 >= self.image_size or y2 < 0 or y2 >= self.image_size:
+                    continue
+            
+                self.target_batch[i,:,:,0] = np.copy(img) / 255.0
+                self.connector_batch[i,:,:,0] = np.copy(connector1) / 255.0 - 0.5
+                self.connector_batch[i,:,:,3] = np.copy(connector2) / 255.0 - 0.5
+                self.connector_batch[i,:,:,1:3] = self.poscode[self.image_size - y1:self.image_size*2 - y1, self.image_size - x1:self.image_size*2 - x1, :]
+                self.connector_batch[i,:,:,4:6] = self.poscode[self.image_size - y2:self.image_size*2 - y2, self.image_size - x2:self.image_size*2 - x2, :]
+                self.connector_batch[i,:,:,6] = np.copy(connectorlink) / 255.0 - 0.5
+                
+                self.image_batch[i,:,:,:] = self.images[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
+                
+                self.normal_batch[i,:,:,:] = self.normal[tile_id, sr:sr+self.image_size, sc:sc+self.image_size, :]
+                
                 break
         
         #print("getting batch done")
-        return self.image_batch[:batchsize, :,:,:], self.connector_batch[:batchsize,:,:,:], self.target_batch[:batchsize, :,:,:], self.target_label_batch[:batchsize,:], self.normal_batch[:batchsize,:,:,:]
+        return self.image_batch[:batchsize, :,:,:], self.connector_batch[:batchsize,:,:,:], self.target_batch[:batchsize, :,:,:], self.normal_batch[:batchsize,:,:,:]
 
 
     def get_batch(self):
@@ -484,7 +278,6 @@ class Dataloader:
             self.image_batch[st : st + batchsize, :, :, :],
             self.connector_batch[st : st + batchsize, :, :, :],
             self.target_batch[st : st + batchsize, :, :, :],
-            self.target_label_batch[st : st + batchsize, :],
             self.normal_batch[st : st + batchsize, :, :, :],
         )
 
