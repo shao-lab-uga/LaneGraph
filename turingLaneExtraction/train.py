@@ -8,7 +8,7 @@ from model import LaneExtractionModel
 from turning_lane_extraction_loss import TurningLaneExtractionLoss
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
-from reachableLaneExtractionValidation.dataloader import get_dataloaders
+from dataloader import get_dataloaders
 from utils.inference_utils import visualize_lane
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -167,10 +167,6 @@ def model_training(gpu_id, world_size, config):
                 lane_groundtruth= lane_groundtruth,
             )
             loss_value = torch.sum(sum(lane_extraction_loss_dic.values()))
-            if torch.isnan(loss_value) or torch.isinf(loss_value):
-                print("Loss is NaN or Inf, skipping this batch.")
-                print(f"Loss value: {lane_extraction_loss_dic}")
-                continue
             # backward pass
             optimizer.zero_grad()
             # scaler.scale(loss_value).backward()
@@ -195,7 +191,7 @@ def model_training(gpu_id, world_size, config):
                                             lane_groundtruth=lane_groundtruth,
                                             direction_groundtruth= direction_context,
                                             visulize_all_samples=False,
-                                            visualize_groundtruth=False)
+                                            visualize_groundtruth=True)
             if (global_step + 1) % 20 == 0:
                 train_dataloader.preload()
         scheduler.step()

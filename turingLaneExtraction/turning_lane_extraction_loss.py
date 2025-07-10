@@ -41,25 +41,21 @@ class TurningLaneExtractionLoss():
         
         return result_dict
     
-    def compute(self, reachable_lane_predicted_a, reachable_lane_groundtruth_a, reachable_lane_predicted_b, reachable_lane_groundtruth_b, reachable_label_predicted, reachable_label_groundtruth):
+    def compute(self, lane_predicted, lane_groundtruth, ):
         """
         loss function for lane and direction extraction.
         Args:
 
-            reachable_lane_predicted_a: [B, 2, H, W] (raw logits for lane A)
-            reachable_lane_predicted_b: [B, 2, H, W] (raw logits for lane B)
-            reachable_lane_groundtruth_a: [B, 1, H, W] (ground truth for lane A)
-            reachable_lane_groundtruth_b: [B, 1, H, W] (ground truth for lane B)
-            reachable_label_predicted: [B, 1] (raw logits for reachable label)
-            reachable_label_groundtruth: [B, 1] (ground truth for reachable label)
+            lane_predicted: [B, 2, H, W] (raw logits for lane)
+            lane_groundtruth: [B, 1, H, W] (ground truth for lane)
         Returns:
             loss: scalar tensor representing the total loss
         """
         
         
         # Compute the dice loss for lane predictions
-        lane_dice_loss = self.dice_loss(reachable_lane_predicted_a, reachable_lane_groundtruth_a) + self.dice_loss(reachable_lane_predicted_b, reachable_lane_groundtruth_b)
-        lane_cross_entropy_loss = self.cross_entropy_loss(reachable_lane_predicted_a, reachable_lane_groundtruth_a) + self.cross_entropy_loss(reachable_lane_predicted_b, reachable_lane_groundtruth_b)
+        lane_dice_loss = self.dice_loss(lane_predicted, lane_groundtruth)
+        lane_cross_entropy_loss = self.cross_entropy_loss(lane_predicted, lane_groundtruth)
         # Combine losses into a dictionary
         
         loss_dict = {

@@ -3,7 +3,7 @@ from utils.config_utils import load_config
 # ============= Seed ===================
 random_seed = 42
 # ============= Path ===================
-project_name = 'LaneExtraction'  # Name of the project
+project_name = 'ReachableLaneValidation'  # Name of the project
 exp_dir = './exp/'  # PATH TO YOUR EXPERIMENT FOLDER
 project_dir = os.path.join(exp_dir, project_name)
 # ============= Dataset Parameters=================
@@ -27,9 +27,9 @@ gpu_ids = [0]
 batch_size = 8
 preload_tiles=4
 epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
-max_epochs = 200 # Total number of epochs to train
+max_epochs = 300# Total number of epochs to train
 # ============= Optimizer Parameters =================
-optimizer_type = 'NAdam'
+optimizer_type = 'AdamW'
 optimizers_dic = dict(
     AdamW=dict(
         type='AdamW',       # AdamW optimizer
@@ -46,7 +46,7 @@ optimizers_dic = dict(
 )
 assert optimizer_type in optimizers_dic, f"Optimizer type {optimizer_type} is not supported"
 # ============= Scheduler Parameters =================
-scheduler_type = 'CosineAnnealingWarmRestarts'
+scheduler_type = 'StepLR'
 schedulers_dic = dict(
     StepLR=dict(
         type='StepLR',      # StepLR scheduler
@@ -102,16 +102,21 @@ config = dict(
     ),
     models=dict(
         
-        lane_extraction_model=dict(
-            in_channels = 14,  
+        reachable_lane_extraction_model=dict(
+            in_channels = 10,  
             num_classes = 2, 
         ),
+        reachable_lane_validation_model=dict(
+            in_channels = 13,  
+            num_classes = 2,  
+        )
         
     ),
     losses=dict(
-        lane_extraction_loss=dict(
+        reachable_lane_extraction_loss=dict(
             lane_cross_entropy_loss_weight=1.0,
             lane_dice_loss_weight=0.3,
+            reachable_label_cross_entropy_loss_weight=1.0,
         ),
     ),
     optimizer = optimizers_dic[optimizer_type],

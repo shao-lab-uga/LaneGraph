@@ -4,7 +4,7 @@ import argparse
 import einops
 import warnings
 warnings.filterwarnings("ignore")
-from model import UnetResnet34
+from laneAndDirectionExtraction.model import UnetResnet34
 from utils.config_utils import load_config
 from laneAndDirectionExtraction.dataloader import get_dataloaders
 from utils.inference_utils import visualizatize_lane_and_direction, load_model

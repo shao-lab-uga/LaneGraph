@@ -3,22 +3,23 @@ import torch
 import argparse
 import einops
 import warnings
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 warnings.filterwarnings("ignore")
-from model import UnetResnet34
+from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
 from laneAndDirectionExtraction.lane_and_direction_extraction_loss import LaneAndDirectionExtractionLoss
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
 from laneAndDirectionExtraction.dataloader import get_dataloaders
 from utils.inference_utils import visualize_lane_and_direction
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
+
 def setup(config, gpu_id):
     """
     Setup the model, optimizer, scheduler, and losses.
     """
     # //[ ] The model config need to be updated if the model is changed
     model_config = config.models
-    model = UnetResnet34(model_config.lane_and_direction_extraction_model).to(gpu_id)
+    model = LaneAndDirectionExtractionModel(model_config.lane_and_direction_extraction_model).to(gpu_id)
 
     # Load the optimizer
     optimizer_config = config.optimizer
@@ -174,7 +175,7 @@ def model_training(gpu_id, world_size, config):
                                                     visualize_groundtruth=True
                                                     )
 
-            if (global_step + 1) % 50 == 0:
+            if (global_step + 1) % 20 == 0:
                 train_dataloader.preload()
         scheduler.step()
         # [ ] Currently the validation is not implemented, but it can be added later.
@@ -193,4 +194,4 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     world_size = torch.cuda.device_count()
-    model_training(0, world_size, config, enable_ddp=False)
+    model_training(0, world_size, config)

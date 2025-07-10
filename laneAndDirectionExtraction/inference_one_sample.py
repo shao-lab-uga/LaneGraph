@@ -4,7 +4,7 @@ import argparse
 import einops
 import warnings
 warnings.filterwarnings("ignore")
-from model import UnetResnet34
+from laneAndDirectionExtraction.model import UnetResnet34
 from utils.config_utils import load_config
 import imageio
 import numpy as np

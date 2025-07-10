@@ -3,7 +3,7 @@ from utils.config_utils import load_config
 # ============= Seed ===================
 random_seed = 42
 # ============= Path ===================
-project_name = 'LaneAndDirectionExtractionEvaluation'
+project_name = 'LaneAndDirectionExtraction'
 exp_dir = './exp/'  # PATH TO YOUR EXPERIMENT FOLDER
 project_dir = os.path.join(exp_dir, project_name)
 # ============= Dataset Parameters=================
@@ -24,10 +24,10 @@ validation_range = data_attributes_config.validation_range
 # ============= Train Parameters =================
 num_machines = 1
 gpu_ids = [0,1]
-batch_size = 6
+batch_size = 8
 preload_tiles=4
 epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
-max_epochs = 200  # Total number of epochs to train
+max_epochs = 300  # Total number of epochs to train
 # ============= Optimizer Parameters =================
 optimizer_type = 'AdamW'
 optimizers_dic = dict(
@@ -125,7 +125,7 @@ config = dict(
         epoch_size=epoch_sisze,
         max_epochs=max_epochs,
         epoch_sisze=epoch_sisze,
-        checkpoint_interval=50,
+        checkpoint_interval=10,
         checkpoint_dir=os.path.join(project_dir, 'checkpoints'),
         visualize_output_path=os.path.join(project_dir, 'visualizations'),
         checkpoint_total_limit=10,
