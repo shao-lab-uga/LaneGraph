@@ -317,8 +317,25 @@ def draw_output(
         cv2.line(out_lane, (ux, uy), (vx, vy), (255, 255, 255), 5)
         cv2.line(out_normal, (ux, uy), (vx, vy), color, 5)
         # draw the nodes
-        cv2.circle(out_lane, (ux, uy), 3, (255, 0, 0), -1)
-        cv2.circle(out_lane, (vx, vy), 3, (255, 0, 0), -1)
+
+    for node in G.nodes():
+        x, y = node[1], node[0]
+        node_type = G.nodes[node].get("type", "unknown")
+        if node_type == "end":
+            cv2.circle(out_lane, (x, y), 5, (255, 0, 0), -1)
+            cv2.circle(out_normal, (x, y), 5, (255, 0, 0), -1)
+        elif node_type == "in":
+            cv2.circle(out_lane, (x, y), 5, (0, 255, 0), -1)
+            cv2.circle(out_normal, (x, y), 5, (0, 255, 0), -1)
+        elif node_type == "out":
+            cv2.circle(out_lane, (x, y), 5, (0, 0, 255), -1)
+            cv2.circle(out_normal, (x, y), 5, (0, 0, 255), -1)
+        elif node_type == "lane":
+            cv2.circle(out_lane, (x, y), 5, (0, 255, 255), -1)
+            cv2.circle(out_normal, (x, y), 5, (0, 255, 255), -1)
+        elif node_type == "link":
+            cv2.circle(out_lane, (x, y), 5, (255, 255, 0), -1)
+            cv2.circle(out_normal, (x, y), 5, (255, 255, 0), -1)
 
     if save_path:
         cv2.imwrite(os.path.join(save_path, "lane_graph_extracted.png"), out_lane)
@@ -395,9 +412,9 @@ def annotate_node_types(
                     outdeg = cc_subgraph.out_degree(node)
 
                     if indeg == 1:
-                        G.nodes[node]["type"] = "in"
-                    elif outdeg == 1:
                         G.nodes[node]["type"] = "out"
+                    elif outdeg == 1:
+                        G.nodes[node]["type"] = "in"
                     else:
                         G.nodes[node]["type"] = "lane"
 

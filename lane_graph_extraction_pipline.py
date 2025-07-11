@@ -10,7 +10,15 @@ from typing import Tuple
 from itertools import product
 from skimage import morphology
 import imageio.v3 as imageio
+from scipy.spatial import KDTree
+import geopandas as gpd
+from shapely.geometry import LineString
+import pandas as pd
+import networkx as nx
 import os
+import networkx as nx
+import pandas as pd
+import matplotlib.pyplot as plt
 import utils.segmentation2graph as segmentation2graph
 from utils.config_utils import load_config
 from utils.inference_utils import load_model
@@ -227,10 +235,10 @@ class LaneGraphExtraction():
         node_types = segmentation2graph.get_node_types(lane_graph)
 
         
-        in_nodes = node_types.get("in", [])
         out_nodes = node_types.get("out", [])
+        in_nodes = node_types.get("in", [])
         
-        node_pairs = list(product(in_nodes, out_nodes))
+        node_pairs = list(product(out_nodes, in_nodes))
         reachable_node_paris = []
         for idx, node_pair in enumerate(node_pairs):
             input_features_node_a, input_features_node_b, input_features_validation = self._make_reachable_lane_validaton_input(
@@ -258,52 +266,166 @@ class LaneGraphExtraction():
 
         return reachable_node_paris
     
-    def _extract_turning_lane(self, lane_graph, reachable_node_pairs, input_satellite_image, direction_context, gpu_id=0):
+
+    def _extract_turning_lane(self, lane_graph, reachable_node_pairs, input_satellite_image, direction_context, gpu_id=0, radius=5.0):
+        # Build KDTree for efficient nearest-neighbor search
+        out_nodes = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "out"]
+        in_nodes = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "in"]
+
+        out_kdtree = KDTree(out_nodes) if out_nodes else None
+        in_kdtree = KDTree(in_nodes) if in_nodes else None
 
         for idx, reachable_node_pair in enumerate(reachable_node_pairs):
             input_features = self._make_lane_extraction_input(
                 reachable_node_pair, input_satellite_image, direction_context, gpu_id
             )
+
             with torch.no_grad():
-                # Extract lane
                 outputs = self.lane_extraction_model(input_features)
+
             outputs = outputs.cpu().numpy()
             lane_predicted = outputs[:, 0:2, :, :]  # [B, 2, H, W]
             lane_predicted = einops.rearrange(lane_predicted, 'b c h w -> b h w c')
-            lane_predicted_image = np.zeros((self.image_size, self.image_size))
-            lane_predicted_image[:, :] = (np.clip(lane_predicted[0,:,:,0], 0, 1) * 255).astype(np.uint8)
-            # lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
+
+            lane_predicted_image = (np.clip(lane_predicted[0, :, :, 0], 0, 1) * 255).astype(np.uint8)
+            lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6, 6))
             lane_predicted_image = lane_predicted_image > 20
             lane_predicted_image = morphology.thin(lane_predicted_image)
-            # Image.fromarray(lane_predicted_image).save(f"turning_lane_predicted_{idx}.jpg")
-            
-            link_graph = segmentation2graph.extract_graph_from_image(lane_predicted_image, start_pos=reachable_node_pair[0])
-            # add the drived link to the lane graph (which is a directed graph), start from the first node
 
+            # Extract graph from thinned binary mask
             start_node, end_node = reachable_node_pair
+            link_graph = segmentation2graph.extract_graph_from_image(
+                lane_predicted_image, start_pos=start_node
+            )
 
-            # Add start and end to lane_graph if missing
-            if start_node not in lane_graph.nodes:
-                lane_graph.add_node(start_node, type='in')
-            if end_node not in lane_graph.nodes:
-                lane_graph.add_node(end_node, type='out')
+            link_nodes = list(link_graph.nodes)
+            if len(link_nodes) == 0:
+                print(f"Warning: link_graph is empty for pair {reachable_node_pair}")
+                continue
 
-            # Copy all nodes and edges from link_graph to lane_graph
-            for node in link_graph.nodes:
+            # Add link_graph's nodes and edges into lane_graph
+            for node in link_nodes:
                 if node not in lane_graph.nodes:
                     lane_graph.add_node(node, type='link')
             for u, v in link_graph.edges:
                 lane_graph.add_edge(u, v)
 
-            # Build KDTree to find closest/farthest nodes
-            link_nodes = np.array(list(link_graph.nodes))
-            if len(link_nodes) == 0:
-                print("Warning: link_graph is empty.")
-                return
+            # Check and connect start if not exactly equal to reachable_node_pair[0]
+            first_node = link_nodes[0]
+            if first_node != start_node and out_kdtree:
+                dist, idx = out_kdtree.query(first_node, distance_upper_bound=radius)
+                if dist < radius:
+                    nearest_out = out_nodes[idx]
+                    lane_graph.add_edge(nearest_out, first_node)
+                else:
+                    print(f"No 'out' node found near {first_node} within radius {radius}")
 
+            # Check and connect end if not exactly equal to reachable_node_pair[1]
+            last_node = link_nodes[-1]
+            if last_node != end_node and in_kdtree:
+                dist, idx = in_kdtree.query(last_node, distance_upper_bound=radius)
+                if dist < radius:
+                    nearest_in = in_nodes[idx]
+                    lane_graph.add_edge(last_node, nearest_in)
+                else:
+                    print(f"No 'in' node found near {last_node} within radius {radius}")
 
         return lane_graph
+
     
+
+
+    def pixel_to_geo(self, path, origin=(0, 0), resolution=(1.0, -1.0)):
+        """Convert a pixel path to geographic coordinates (lon, lat or meters)."""
+        lon0, lat0 = origin
+        dx, dy = resolution
+        return [(lon0 + x * dx, lat0 + y * dy) for (x, y) in path]
+
+    def extract_lanes(self, lane_graph, origin=(0, 0), resolution=(1.0, -1.0), crs="EPSG:4326",
+                      lane_path="lanes.geojson", turning_path="turning_links.geojson"):
+        import geopandas as gpd
+        from shapely.geometry import LineString
+        import pandas as pd
+        import networkx as nx
+
+        def pixel_to_geo(path, origin, resolution):
+            lon0, lat0 = origin
+            dx, dy = resolution
+            return [(lon0 + x * dx, lat0 + y * dy) for (x, y) in path]
+
+        lane_rows = []
+        turning_rows = []
+
+        valid_lane_combinations = {
+            ("end", "out"),
+            ("in", "end")
+        }
+        valid_link_combinations = {
+            ("out", "in"),
+        }
+
+        for src, src_data in lane_graph.nodes(data=True):
+            for tgt, tgt_data in lane_graph.nodes(data=True):
+                if src == tgt:
+                    continue
+
+                src_type = src_data.get("type")
+                tgt_type = tgt_data.get("type")
+
+                is_lane = (src_type, tgt_type) in valid_lane_combinations
+                is_turn = (src_type, tgt_type) in valid_link_combinations
+
+                if is_lane or is_turn:
+                    try:
+                        path = nx.shortest_path(lane_graph, src, tgt)
+                    except nx.NetworkXNoPath:
+                        continue
+
+                    # Convert to geo coordinates
+                    geo_path = pixel_to_geo(path, origin=origin, resolution=resolution)
+                    geometry = LineString(geo_path)
+
+                    row = {
+                        "start_x": geo_path[0][0],
+                        "start_y": geo_path[0][1],
+                        "end_x": geo_path[-1][0],
+                        "end_y": geo_path[-1][1],
+                        "type": f"{src_type}->{tgt_type}",
+                        "geometry": geometry
+                    }
+
+                    if is_lane:
+                        lane_rows.append(row)
+                    elif is_turn:
+                        turning_rows.append(row)
+
+        gdf_lanes = gpd.GeoDataFrame(lane_rows, geometry="geometry", crs=crs)
+        gdf_turning = gpd.GeoDataFrame(turning_rows, geometry="geometry", crs=crs)
+
+        gdf_lanes.to_file(lane_path, driver="GeoJSON")
+        gdf_turning.to_file(turning_path, driver="GeoJSON")
+
+        return gdf_lanes, gdf_turning
+
+
+    def visualize_lanes(self, gdf, ax=None, color='blue', label='lane'):
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 8))
+
+        gdf.plot(ax=ax, color=color, linewidth=2, alpha=0.7, label=label)
+
+        ax.set_aspect('equal')
+        ax.set_title(f"Visualized {label}s")
+        ax.grid(True)
+
+        # Optional: Add start/end dots
+        for _, row in gdf.iterrows():
+            coords = list(row.geometry.coords)
+            ax.plot(*coords[0], marker='o', color=color, markersize=4)   # start
+            ax.plot(*coords[-1], marker='x', color=color, markersize=4)  # end
+
+        return ax
+
     def extract_lane_graph(self, input_satellite_image_path, gpu_id=0):
         """
         Extracts lane graph from the satellite image.
@@ -332,8 +454,22 @@ class LaneGraphExtraction():
                                                 reachable_node_paris, 
                                                 input_satellite_image, 
                                                 direction_predicted, 
-                                                gpu_id)
+                                                gpu_id,
+                                                radius=5.0)
+        for node in lane_graph.nodes:
+            print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
         segmentation2graph.draw_output(lane_graph, '.')
+
+        gdf_lanes, gdf_turning = self.extract_lanes(lane_graph,
+            origin=(-122.0, 37.0),  # lon, lat
+            resolution=(0.00001, -0.00001),
+            lane_path="lanes.geojson",
+            turning_path="turning_links.geojson"
+        )
+
+        ax = self.visualize_lanes(gdf_lanes, color='gray', label='lane')
+        self.visualize_lanes(gdf_turning, ax=ax, color='red', label='turning')
+        plt.savefig(f"lanes_{image_name}.png")
         return 
 
 
@@ -344,5 +480,5 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config)
-    input_satellite_image_path = "image.png"
+    input_satellite_image_path = "test_image_1.png"
     lane_graph_extraction.extract_lane_graph(input_satellite_image_path)
