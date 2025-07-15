@@ -9,7 +9,16 @@ import numpy
 from multiprocessing import Pool
 import sys
 from math import sqrt
-from postprocessing import graph_refine, connectDeadEnds, downsample
+
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from postprocessing import refine_lane_graph, connect_nearby_dead_ends, downsample_graph
+
+
+graph_refine = refine_lane_graph
+connectDeadEnds = connect_nearby_dead_ends
+downsample = downsample_graph
 from douglasPeucker import simpilfyGraph
 
 import os 
@@ -66,15 +75,15 @@ def segtograph(in_fname, threshold, isolated_thr = 32, spur_thr = 0, deadend_thr
 
     im = gaussian_filter(im, sigma=3)
 
-    #Image.fromarray(im).save("seg2graphdebugstep1.png")
+
     im = scipy.ndimage.grey_closing(im, size=(6,6))
-    #Image.fromarray(im).save("seg2graphdebugstep2.png")
+
     im = im >= threshold
     
     im = skimage.morphology.thin(im)
     im = im.astype('uint8')
 
-    # extract a graph by placing vertices every THRESHOLD pixels, and at all intersections
+
     vertices = []
     edges = set()
     def add_edge(src, dst):
@@ -141,10 +150,6 @@ def segtograph(in_fname, threshold, isolated_thr = 32, spur_thr = 0, deadend_thr
                 break
     neighbors = {}
 
-    #with open(out_fname, 'w') as f:
-        #for vertex in vertices:
-        #	f.write('{} {}\n'.format(vertex[0], vertex[1]))
-        #f.write('\n')
 
     vertex = vertices
 
@@ -173,7 +178,7 @@ def segtograph(in_fname, threshold, isolated_thr = 32, spur_thr = 0, deadend_thr
             
     g = graph_refine(neighbors, isolated_thr = isolated_thr, spurs_thr = spur_thr)
     g = connectDeadEnds(g, thr = deadend_thr)
-    #pickle.dump(g, open(out_fname, "w"))
+
 
     return g
 

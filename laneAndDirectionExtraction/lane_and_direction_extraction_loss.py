@@ -7,12 +7,12 @@ class LaneAndDirectionExtractionLoss():
     def __init__(self, device, config):
         
         self.device = device
-        # Lane
+
         self.lane_cross_entropy_loss = MeanMetric().to(self.device)
         self.lane_dice_loss = MeanMetric().to(self.device)
         self.lane_cross_entropy_loss_weight = config.lane_cross_entropy_loss_weight
         self.lane_dice_loss_weight = config.lane_dice_loss_weight
-        # Direction
+
         self.direction_l2_loss = MeanMetric().to(self.device)
         self.direction_l2_loss_weight = config.direction_l2_loss_weight
 
@@ -39,7 +39,7 @@ class LaneAndDirectionExtractionLoss():
         result_dict['lane_dice_loss'] = self.lane_dice_loss.compute()
         result_dict['direction_l2_loss'] = self.direction_l2_loss.compute()
         
-        # Reset the metrics after computation
+
         self.reset()
         
         return result_dict
@@ -59,7 +59,7 @@ class LaneAndDirectionExtractionLoss():
         lane_cross_entropy_loss = self.cross_entropy_loss(lane_predicted, lane_groundtruth, region_mask)
         lane_dice_loss = self.dice_loss(lane_predicted, lane_groundtruth, region_mask)
         direction_l2_loss = torch.mean(region_mask * torch.square(direction_groundtruth - direction_predicted))
-        # Combine losses into a dictionary
+
         loss_dict = {
             'lane_cross_entropy_loss': lane_cross_entropy_loss * self.lane_cross_entropy_loss_weight,
             'lane_dice_loss': lane_dice_loss * self.lane_dice_loss_weight,
@@ -84,10 +84,10 @@ class LaneAndDirectionExtractionLoss():
         targets: target labels of shape [B, 1, H, W], binary (0 or 1)
         mask: mask of shape [B, 1, H, W], 1 for valid region, 0 to ignore
         """
-        p0 = logits[:, 0:1, :, :]  # logits for class 0 which is the lane
-        p1 = logits[:, 1:2, :, :]  # logits for class 1 which is the non-lane
+        p0 = logits[:, 0:1, :, :]  
+        p1 = logits[:, 1:2, :, :]  
 
-        # Numerically stable log-sum-exp formulation of softmax cross-entropy
+
         logsumexp = torch.log(torch.exp(p0) + torch.exp(p1))
         loss = -(targets * p0 + (1 - targets) * p1 - logsumexp)
 
@@ -101,10 +101,10 @@ class LaneAndDirectionExtractionLoss():
         targets: target labels of shape [B, 1, H, W]
         mask: binary mask of shape [B, 1, H, W]
         """
-        # Convert logits to probability map using sigmoid on class difference
+
         prob = torch.sigmoid(logits[:, 0:1, :, :] - logits[:, 1:2, :, :])
 
         numerator = 2 * torch.sum(prob * targets * mask)
-        denominator = torch.sum((prob + targets) * mask) + 1.0  # avoid zero division
+        denominator = torch.sum((prob + targets) * mask) + 1.0  
 
         return 1 - numerator / denominator

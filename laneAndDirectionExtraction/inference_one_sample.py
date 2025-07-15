@@ -11,11 +11,16 @@ import numpy as np
 from utils.inference_utils import visualize_lane_and_direction_inference, load_model
 
 
+import sys
+sys.path.append('..')
+from image_postprocessing import normalize_image_for_model_input
+
+
 def setup(config, gpu_id):
     """
     Setup the model, optimizer, scheduler, and losses.
     """
-    # //[ ] The model config need to be updated if the model is changed
+
     model_config = config.models
     model = UnetResnet34(model_config.lane_and_direction_extraction_model).to(gpu_id)
     return model
@@ -87,7 +92,7 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     input_satillite_image = imageio.imread(args.input_image_path)  # Load the input image
-    input_satillite_image = input_satillite_image.astype(np.float64) / 255.0 - 0.5
+    input_satillite_image = normalize_image_for_model_input(input_satillite_image)
     model_inference(input_satillite_image, 0, config)
 
     
