@@ -528,7 +528,7 @@ class LaneGraphExtraction():
         segmentation2graph.draw_output(lane_graph, '.')
 
         lanes_and_links_gdf = self.extract_lanes_and_links_with_fids(lane_graph,
-            origin=(0, 0), # Assuming origin is (0, 0) for simplicity.
+            origin=(0, -87), # Assuming origin is (0, -87) for simplicity.
             resolution=(0.125, -0.125), # 0.125 meters/pixel.
             output_path="lanes_and_links.geojson"
         )
