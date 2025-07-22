@@ -3,7 +3,7 @@ import json
 dataset = 'SatelliteLane'
 
 # ============= Path ===================
-dataset_root_dir = "/home/hetianguo/Desktop/LaneGraph"
+dataset_root_dir = "C:\\GitSrc\\LaneGraph"
 raw_data_path = os.path.join(dataset_root_dir, 'raw_data')
 processed_data_path = os.path.join(dataset_root_dir, 'processed_data')
 dataset_split_path = os.path.join(dataset_root_dir, 'dataset_split.json')
