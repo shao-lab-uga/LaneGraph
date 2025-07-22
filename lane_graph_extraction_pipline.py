@@ -27,18 +27,6 @@ from turingLaneExtraction.model import LaneExtractionModel
 from reachableLaneValidation.model import ReachableLaneValidationModel
 from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
 
-from image_postprocessing import (
-    normalize_image_for_model_input,
-    post_process_model_output,
-    encode_direction_vectors_to_image,
-    denormalize_model_output
-)
-								  
-									
-							  
-									  
-							
- 
 
 
 class LaneGraphExtraction():
@@ -108,18 +96,10 @@ class LaneGraphExtraction():
         """
         print("Extracting lane and direction from the satellite image...")
         
-																						
-																									   
-																										   
 
         normalized_image = normalize_image_for_model_input(input_satellite_image)
         normalized_image = torch.from_numpy(normalized_image).float().to(gpu_id)  # [H, W, 3]
         normalized_image = einops.rearrange(normalized_image, 'h w c -> 1 c h w')  # [1, 3, H, W]
-									 
-							
-									 
-												   
-		   
 
         with torch.no_grad():
             outputs = self.lane_and_direction_extraction_model(input_satellite_image) # [B, 4, H, W]
@@ -279,7 +259,6 @@ class LaneGraphExtraction():
             cv2.circle(output_image, (x2, y2), 12, color, -1)
             
 
-																										
             if predicted_label.item() == 1:
                 reachable_node_pairs.append(node_pair)
 
@@ -309,19 +288,7 @@ class LaneGraphExtraction():
                 apply_thinning=True
             )
 
-		# outputs = self.lane_and_direction_extraction_model(normalized_image) # [B, 4, H, W]
 
-        # lane_predicted_image, direction_predicted_image = post_process_model_output(
-            # outputs.cpu().numpy(), 
-            # threshold=64, 
-            # morphology_size=(6, 6),
-            # save_debug_image="lane_predicted.jpg"
-        # )																									 
-																								
-															
-																		
-
-													
             start_node, end_node = reachable_node_pair
             link_graph = segmentation2graph.extract_graph_from_image(
                 lane_predicted_image, start_pos=start_node
@@ -350,7 +317,6 @@ class LaneGraphExtraction():
                     print(f"No 'out' node found near {first_node} within radius {radius}")
 
 
-																				  
             last_node = link_nodes[-1]
             if last_node != end_node and in_kdtree:
                 dist, idx = in_kdtree.query(last_node, distance_upper_bound=radius)
