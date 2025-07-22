@@ -118,7 +118,7 @@ class LaneGraphExtraction():
         Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
 
         lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
-        threshold = 64
+        threshold = 16
         lane_predicted_image = lane_predicted_image >= threshold
         lane_predicted_image = morphology.thin(lane_predicted_image)
         lane_graph = segmentation2graph.extract_graph_from_image(lane_predicted_image)
@@ -546,7 +546,7 @@ if __name__ == "__main__":
     lane_graph_extraction = LaneGraphExtraction(config)
     
     # Get all satellite images from UGAsat_img directory
-    UGAsat_img_dir = "UGAsat_img"
+    UGAsat_img_dir = "Downloads\GoogleSatellite"
     UGasat_imgs = []
     if os.path.exists(UGAsat_img_dir):
         for filename in os.listdir(UGAsat_img_dir):
