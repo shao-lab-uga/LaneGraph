@@ -1,9 +1,9 @@
 
 import cv2
 import argparse
+import pyproj
 import torch
 import scipy.ndimage
-import matplotlib.lines as mlines
 from PIL import Image
 import einops
 import numpy as np
@@ -12,17 +12,27 @@ from itertools import product
 from skimage import morphology
 import imageio.v3 as imageio
 from scipy.spatial import KDTree
-import os
-import matplotlib.pyplot as plt
-from pyproj import CRS
-import utils.segmentation2graph as segmentation2graph
-from utils.config_utils import load_config
-from utils.inference_utils import load_model
 import geopandas as gpd
+import pyproj
 from shapely.geometry import LineString
 import pandas as pd
 import networkx as nx
-import pyproj
+import os
+import networkx as nx
+import pandas as pd
+import matplotlib.pyplot as plt
+import utils.segmentation2graph as segmentation2graph
+from utils.config_utils import load_config
+from utils.inference_utils import load_model
+
+
+from image_postprocessing import (
+    normalize_image_for_model_input,
+    post_process_model_output,
+    encode_direction_vectors_to_image,
+    denormalize_model_output
+)
+
 from turingLaneExtraction.model import LaneExtractionModel
 from reachableLaneValidation.model import ReachableLaneValidationModel
 from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
@@ -102,25 +112,17 @@ class LaneGraphExtraction():
         normalized_image = einops.rearrange(normalized_image, 'h w c -> 1 c h w')  # [1, 3, H, W]
 
         with torch.no_grad():
-            outputs = self.lane_and_direction_extraction_model(input_satellite_image) # [B, 4, H, W]
-        outputs = outputs.cpu().numpy()
-        lane_predicted = outputs[:, 0:2, :, :]  # [B, 2, H, W]
-        direction_predicted = outputs[:, 2:4, :, :] # [B, 2, H, W]
+            outputs = self.lane_and_direction_extraction_model(normalized_image) # [B, 4, H, W]
+        
 
-        lane_predicted = einops.rearrange(lane_predicted, 'b c h w -> b h w c')
-        direction_predicted = einops.rearrange(direction_predicted, 'b c h w -> b h w c')
+        lane_predicted_image, direction_predicted_image = post_process_model_output(
+            outputs.cpu().numpy(), 
+            threshold=64, 
+            morphology_size=(6, 6),
+            save_debug_image="lane_predicted.jpg"
+        )
+        
 
-        lane_predicted_image = np.zeros((self.image_size, self.image_size))
-        lane_predicted_image[:, :] = np.clip(lane_predicted[0,:,:,0], 0, 1) * 255
-        direction_predicted_image = np.zeros((self.image_size, self.image_size, 2))
-        direction_predicted_image[:,:,0] = np.clip(direction_predicted[0,:,:,0],-1,1) * 127 + 127
-        direction_predicted_image[:,:,1] = np.clip(direction_predicted[0,:,:,1],-1,1) * 127 + 127
-        # Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
-
-        lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
-        threshold = 64
-        lane_predicted_image = lane_predicted_image >= threshold
-        lane_predicted_image = morphology.thin(lane_predicted_image)
         lane_graph = segmentation2graph.extract_graph_from_image(lane_predicted_image)
         lane_graph = segmentation2graph.direct_graph_from_vector_map(lane_graph, direction_predicted_image)
 
@@ -338,7 +340,11 @@ class LaneGraphExtraction():
         return [(lon0 + x * dx, lat0 + y * dy) for (x, y) in path]
 
     def extract_lanes_and_links_with_fids(self, lane_graph, origin=(0, 0), resolution=(0.125, -0.125), output_path="lane_links.geojson"):
-
+        import geopandas as gpd
+        from shapely.geometry import LineString
+        import pandas as pd
+        import networkx as nx
+        import pyproj
         proj = pyproj.Proj(proj="utm", zone=51, datum="WGS84")  # use proper UTM zone
         origin_lon, origin_lat = origin
         origin_x, origin_y = proj(origin_lon, origin_lat)  # Convert origin to UTM coordinates
@@ -434,6 +440,12 @@ class LaneGraphExtraction():
                         # This lane → downstream link
                         if candidate["start_node_id"] == tgt:
                             row["to_fid"] = str(candidate["fid"])
+        from pyproj import CRS
+        def get_utm_crs_from_latlon(lat, lon):
+            zone_number = int((lon + 180) // 6) + 1
+            is_northern = lat >= 0
+            epsg_code = 32600 + zone_number if is_northern else 32700 + zone_number
+            return CRS.from_epsg(epsg_code)
         
         gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=proj.srs)
         gdf.drop(columns=["start_node_id", "end_node_id", "subtype", "edge_nodes"], inplace=True)
@@ -444,6 +456,7 @@ class LaneGraphExtraction():
 
 
     def visualize_lanes_and_links(self, gdf, ax=None, lane_color='blue', link_color='red', show_labels=True):
+        import matplotlib.lines as mlines
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 10))
@@ -494,7 +507,7 @@ class LaneGraphExtraction():
         input_satellite_image = imageio.imread(input_satellite_image_path)
         # # Step 1: Lane and Direction Extraction
         lane_graph = self._extract_lane_and_direction(input_satellite_image)
-        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph, save_path=None)
+        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph, '.')
         # Step 2: Reachable Lane Extraction
         intersection_center = (self.image_size // 2, self.image_size // 2)
         reachable_node_paris = self.extract_valid_turining_pairs(lane_graph, 
