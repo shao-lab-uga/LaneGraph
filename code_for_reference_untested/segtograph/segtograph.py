@@ -14,7 +14,16 @@ import subprocess
 import sys
 from math import sqrt
 import pickle
-from postprocessing import graph_refine, connectDeadEnds, downsample
+
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from postprocessing import refine_lane_graph, connect_nearby_dead_ends, downsample_graph
+
+
+graph_refine = refine_lane_graph
+connectDeadEnds = connect_nearby_dead_ends  
+downsample = downsample_graph
 import cv2 
 from douglasPeucker import simpilfyGraph
 
@@ -84,7 +93,7 @@ im = im >= threshold
 im = skimage.morphology.thin(im)
 im = im.astype('uint8')
 
-# extract a graph by placing vertices every THRESHOLD pixels, and at all intersections
+
 vertices = []
 edges = set()
 def add_edge(src, dst):
