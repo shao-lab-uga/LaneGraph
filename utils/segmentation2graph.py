@@ -285,7 +285,7 @@ def draw_inputs(
     return out_lane, out_normal
 
 def draw_output(
-    G: nx.DiGraph, save_path: Optional[Path] = None
+    G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Generates inputs for turning lane extraction processes. Creates lane mask and normal map using directed graph.
 
@@ -337,13 +337,13 @@ def draw_output(
             cv2.circle(out_lane, (x, y), 5, (255, 255, 0), -1)
             cv2.circle(out_normal, (x, y), 5, (255, 255, 0), -1)
 
-    if save_path:
-        cv2.imwrite(os.path.join(save_path, "lane_graph_extracted.png"), out_lane)
+    if save_path and image_name:
+        cv2.imwrite(os.path.join(save_path, f"{image_name}.png"), out_lane)
         save_normal_arr = np.full(
             (WINDOW_SIZE, WINDOW_SIZE, 3), 127, dtype=out_normal.dtype
         )
         save_normal_arr[:, :, 0:2] = out_normal
-        cv2.imwrite(os.path.join(save_path, "lane_graph_extracted_normal.png"), save_normal_arr)
+        cv2.imwrite(os.path.join(save_path, f"{image_name}_normal.png"), save_normal_arr)
 
     return out_lane, out_normal
 

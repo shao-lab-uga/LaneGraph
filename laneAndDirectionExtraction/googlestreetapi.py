@@ -1,10 +1,29 @@
 import requests
 import math
 from pathlib import Path
+import numpy as np 
 """
  Implement  a bottom half in order to calculate the exact area in which to have
  80m x 80m area
 """
+def read_coordinates_as_numpy(file_path):
+    try:
+        # Read the file and convert coordinates to NumPy array
+        with open(file_path, 'r') as file:
+            coordinates = []
+            for line in file:
+                # Split the line into longitude and latitude and convert to float
+                longitude, latitude = map(float, line.strip().split(','))
+                coordinates.append([longitude, latitude])
+            # Convert the list to a NumPy array
+            coordinates_array = np.array(coordinates)
+            print("Coordinates as NumPy array:")
+            print(coordinates_array)
+            return coordinates_array
+    except FileNotFoundError:
+        print(f"File not found: {file_path}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 def download_satellite_image(api_key: str, latitude: float, longitude: float):
     """
@@ -78,9 +97,11 @@ def download_satellite_image(api_key: str, latitude: float, longitude: float):
 
 if __name__ == "__main__":
 
-    MY_API_KEY = ""
-
-
-    target_latitude = 33.95376197266688
-    target_longitude = -83.37434831554542
-    download_satellite_image(MY_API_KEY, target_latitude, target_longitude)
+    MY_API_KEY = "AIzaSyCUykWxRgbaYGA7kcCwYMK-aRCvjlA3zoM"
+    
+    read_coordinates_as_numpy("coordinates.txt")
+    for row in read_coordinates_as_numpy("coordinates.txt"):
+        target_latitude = row[1]
+        target_longitude = row[0]
+        download_satellite_image(MY_API_KEY, target_latitude, target_longitude)
+        print(f"Downloaded image for coordinates: {target_latitude}, {target_longitude}")   
