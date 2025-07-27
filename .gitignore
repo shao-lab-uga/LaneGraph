@@ -19,5 +19,4 @@ validation_laneExtraction*/*
 *.pth
 **/__pycache__/*
 # Data files
-processed_data/*
 exp/*
