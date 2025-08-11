@@ -65,7 +65,7 @@ config = dict(
                 in_channels = 13,  
                 num_classes = 2,  
             ),
-            weight_path="exp/ReachableLaneValidation/checkpoints/epoch_220.pth",
+            weight_path="exp/ReachableLaneValidation/checkpoints/epoch_400.pth",
         ),
         lane_extraction_model=dict(
             in_channels = 14,  

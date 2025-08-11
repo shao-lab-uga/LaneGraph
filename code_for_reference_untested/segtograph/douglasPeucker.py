@@ -8,63 +8,14 @@ def distance(p1,p2):
 	return math.sqrt(a*a+b*b)
 
 
-def point2lineDistance(p, n1, n2):
-	l = distance(n1,n2)
-
-	v1 = [n1[0]-p[0], n1[1]-p[1]]
-	v2 = [n2[0]-p[0], n2[1]-p[1]]
-	
-	area = abs(v1[0]*v2[1]-v1[1]*v2[0])
-
-	return area/l
-
-
-def douglasPeucker(node_list, e = 5):
-	new_list = []
-
-	if len(node_list) <= 2:
-		return node_list
-
-	best_i = 1
-	best_d = 0
-
-	for i in range(1, len(node_list)-1):
-		d = point2lineDistance(node_list[i], node_list[0], node_list[-1])
-		if d > best_d:
-			best_d = d 
-			best_i = i 
-
-	if best_d <= e:
-		return [node_list[0], node_list[-1]]
-
-	new_list = douglasPeucker(node_list[0:best_i+1], e=e)
-	new_list = new_list[:-1] + douglasPeucker(node_list[best_i:len(node_list)], e=e)
-
-	return new_list
 
 
 
 
-def graphInsert(node_neighbor, n1key, n2key):
-	if n1key != n2key:
-		if n1key in node_neighbor:
-			if n2key in node_neighbor[n1key]:
-				pass 
-			else:
-				node_neighbor[n1key].append(n2key)
-		else:
-			node_neighbor[n1key] = [n2key]
 
 
-		if n2key in node_neighbor:
-			if n1key in node_neighbor[n2key]:
-				pass 
-			else:
-				node_neighbor[n2key].append(n1key)
-		else:
-			node_neighbor[n2key] = [n1key]
 
-	return node_neighbor
+
 
 
 
@@ -110,7 +61,60 @@ def simpilfyGraph(node_neighbor, e=2.5):
 
 	return new_node_neighbor
 
+def douglasPeucker(node_list, e = 5):
+	new_list = []
 
+	if len(node_list) <= 2:
+		return node_list
+
+	best_i = 1
+	best_d = 0
+
+	for i in range(1, len(node_list)-1):
+		d = point2lineDistance(node_list[i], node_list[0], node_list[-1])
+		if d > best_d:
+			best_d = d 
+			best_i = i 
+
+	if best_d <= e:
+		return [node_list[0], node_list[-1]]
+
+	new_list = douglasPeucker(node_list[0:best_i+1], e=e)
+	new_list = new_list[:-1] + douglasPeucker(node_list[best_i:len(node_list)], e=e)
+
+	return new_list
+
+
+def point2lineDistance(p, n1, n2):
+	l = distance(n1,n2)
+
+	v1 = [n1[0]-p[0], n1[1]-p[1]]
+	v2 = [n2[0]-p[0], n2[1]-p[1]]
+	
+	area = abs(v1[0]*v2[1]-v1[1]*v2[0])
+
+	return area/l
+
+def graphInsert(node_neighbor, n1key, n2key):
+	if n1key != n2key:
+		if n1key in node_neighbor:
+			if n2key in node_neighbor[n1key]:
+				pass 
+			else:
+				node_neighbor[n1key].append(n2key)
+		else:
+			node_neighbor[n1key] = [n2key]
+
+
+		if n2key in node_neighbor:
+			if n1key in node_neighbor[n2key]:
+				pass 
+			else:
+				node_neighbor[n2key].append(n1key)
+		else:
+			node_neighbor[n2key] = [n1key]
+
+	return node_neighbor
 def colorGraph(node_neighbor, colormap):
 		
 	visited = []

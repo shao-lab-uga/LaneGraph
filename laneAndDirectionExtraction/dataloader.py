@@ -11,7 +11,7 @@ from pathlib import Path
 import easydict
 from utils.config_utils import load_config
 
-class Dataloader:
+class LaneAndDirectionDataloader:
     def __init__(
         self,
         data_path,
@@ -99,6 +99,57 @@ class Dataloader:
         normal[:, :, 1] = new_normal_y
         return np.clip(normal, -0.9999, 0.9999)
 
+    def encode_direction_to_bin_top_left(self, normal_u, num_bins=36, y_down=True, mask=None):
+        ux = normal_u[..., 0]
+        uy_img = normal_u[..., 1]
+
+        if mask is None:
+            mask = np.ones_like(ux, dtype=bool)
+
+        # normalize to unit length
+        mag = np.maximum(np.sqrt(ux**2 + uy_img**2), 1e-6)
+        ux /= mag
+        uy_img /= mag
+
+        uy_math = -uy_img if y_down else uy_img
+        ang = np.arctan2(uy_math, ux)  # standard math coords: 0°=east, CCW
+
+        # shift so that top-left (north-west) = 0°
+        angle_offset_rad = math.radians(-135)  # image coords
+        ang = (ang - angle_offset_rad + 2*np.pi) % (2*np.pi)
+
+        # binning
+        bin_width = 2 * np.pi / num_bins
+        bin_idx = np.floor(ang / bin_width).astype(np.int32)
+        residual = ang - (bin_idx + 0.5) * bin_width
+        bin_idx = bin_idx[..., None]
+        residual = residual[..., None]
+        return bin_idx, residual
+    
+    def _decode_bin_to_direction(self, bin_idx, residual=None, num_bins=36):
+        """
+        Decode angle bins (and optional residuals) back to unit vectors.
+
+        Args:
+            bin_idx: int array (H, W) with values in [0, num_bins-1]
+            residual: float array (H, W) in radians, optional
+            num_bins: number of angle bins
+
+        Returns:
+            normal_u: np.ndarray of shape (H, W, 2), unit vectors in [-1, 1].
+        """
+        bin_width = 2 * np.pi / num_bins
+        if residual is None:
+            angles = (bin_idx + 0.5) * bin_width
+        else:
+            angles = (bin_idx + 0.5) * bin_width + residual
+
+        ux = np.cos(angles)
+        uy = np.sin(angles)
+
+        normal_u = np.stack([ux, uy], axis=-1)
+        return normal_u
+    
     def _apply_augmentation(self, images, tile_idx):
         """Apply color augmentation to images."""
         if not self.training:
@@ -137,7 +188,6 @@ class Dataloader:
             # Process centers and normal map
             self.centers[i] = self._rotate_centers(centers, angle)
             normal = self._process_normal_map(normal, angle)
-            
             # Normalize images
             sat_img = sat_img.astype(np.float64) / 255.0 - 0.5
             mask = mask.astype(np.float64) / 255.0
@@ -148,7 +198,6 @@ class Dataloader:
             self.masks[i, :, :, 0] = mask
             self.targets[i, :, :, 0] = target
             self.normal[i] = normal
-            
             # Apply augmentation
             self._apply_augmentation(self.images, i)
 
@@ -170,34 +219,35 @@ class Dataloader:
         
         return np.sum(crop_targets) >= 100 and np.sum(crop_masks) >= 2500  # 50*50
 
-    def get_batch(self):
+    def get_batch(self, centered_intersection=False):
         """Generate a batch of cropped images."""
         # Clear batch arrays
         for batch_array in [self.image_batch, self.mask_batch, self.target_batch, self.normal_batch]:
             batch_array.fill(0)
-        
-        available_coords = self._get_available_coordinates()
-        if len(available_coords) < self.batch_size:
-            return None
+        if centered_intersection:
+            available_coords = self._get_available_coordinates()
+            if len(available_coords) < self.batch_size:
+                return None
         
         selected_coords = []
-        noise_range = 100
         
         while len(selected_coords) < self.batch_size:
-            if not available_coords:
-                return None
             
-            # Select random coordinate
-            coord, tile_id = random.choice(available_coords)
-            available_coords.remove((coord, tile_id))
-            
-            # Add noise and clamp to valid range
-            x, y = coord
-            x += random.randint(-noise_range, noise_range) - (self.image_size // 2)
-            y += random.randint(-noise_range, noise_range) - (self.image_size // 2)
-            x = np.clip(x, 0, self.dataset_image_size - self.image_size - 1)
-            y = np.clip(y, 0, self.dataset_image_size - self.image_size - 1)
-            
+            if centered_intersection:
+                # Select random coordinate
+                coord, tile_id = random.choice(available_coords)
+                available_coords.remove((coord, tile_id))
+                x, y = coord
+                noise_range = 100
+                # Add noise and clamp to valid range
+                x += random.randint(-noise_range, noise_range) - (self.image_size // 2)
+                y += random.randint(-noise_range, noise_range) - (self.image_size // 2)
+                x = np.clip(x, 0, self.dataset_image_size - self.image_size - 1)
+                y = np.clip(y, 0, self.dataset_image_size - self.image_size - 1)
+            else: 
+                tile_id = random.randint(0,self.preload_tiles-1)
+                x = random.randint(0, self.dataset_image_size-1-self.image_size)
+                y = random.randint(0, self.dataset_image_size-1-self.image_size)
             # Validate crop
             if self._is_valid_crop(x, y, tile_id):
                 selected_coords.append(((x, y), tile_id))
@@ -208,7 +258,6 @@ class Dataloader:
             self.mask_batch[batch_idx] = self.masks[tile_id, y:y+self.image_size, x:x+self.image_size]
             self.target_batch[batch_idx] = self.targets[tile_id, y:y+self.image_size, x:x+self.image_size]
             self.normal_batch[batch_idx] = self.normal[tile_id, y:y+self.image_size, x:x+self.image_size]
-        
         return (
             self.image_batch[:self.batch_size],
             self.mask_batch[:self.batch_size],
@@ -217,7 +266,7 @@ class Dataloader:
         )
 
 
-class ParallelDataLoader:
+class LaneAndDirectionParallelDataLoader:
     """
     A parallel data loader that manages multiple Dataloader instances in separate threads
     to enable concurrent data loading and preprocessing.
@@ -226,7 +275,7 @@ class ParallelDataLoader:
     def __init__(self, *args, **kwargs):
         """Initialize parallel data loader with multiple subloaders."""
         self.num_workers = 4  # Number of worker threads
-        self.subloaders = []
+        self.subloaders = list()
         self.ready_events = []  # Events signaling when subloader has data ready
         self.wait_events = []   # Events to signal subloader to start preloading
         
@@ -234,7 +283,7 @@ class ParallelDataLoader:
         
         # Create subloaders and their associated events
         for i in range(self.num_workers):
-            self.subloaders.append(Dataloader(*args, **kwargs))
+            self.subloaders.append(LaneAndDirectionDataloader(*args, **kwargs))
             self.ready_events.append(threading.Event())
             self.wait_events.append(threading.Event())
         
@@ -372,7 +421,7 @@ def get_dataloaders(dataloaders_config):
         Returns:
             Dataloader instance.
         """
-        return ParallelDataLoader(
+        return LaneAndDirectionParallelDataLoader(
             data_path=dataloader_config.data_path,
             indrange=dataloader_config.indrange,
             image_size=dataloader_config.image_size,

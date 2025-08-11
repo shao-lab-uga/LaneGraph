@@ -20,14 +20,14 @@ training_range = data_attributes_config.training_range
 testing_range = data_attributes_config.testing_range
 validation_range = data_attributes_config.validation_range
 # ============= Model Parameters =================
-
+num_bins = 36
 # ============= Train Parameters =================
 num_machines = 1
 gpu_ids = [0,1]
-batch_size = 8
+batch_size = 1
 preload_tiles=4
-epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
-max_epochs = 300  # Total number of epochs to train
+epoch_size = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
+max_epochs = 400  # Total number of epochs to train
 # ============= Optimizer Parameters =================
 optimizer_type = 'AdamW'
 optimizers_dic = dict(
@@ -101,14 +101,12 @@ config = dict(
         ),
     ),
     models=dict(
-        # avaiable settings = [
-            # ("resnet34", "fpn"),
-            # ("resnet50", "fpn"),
-            # ('vit_base_patch16_224.dino', 'vitdecoder'),
-        # ]
+
         lane_and_direction_extraction_model=dict(
-            in_channels = 3,  # Input channels for RGB images
-            num_classes = 4,  # Output dimension for lane and direction extraction
+            ocr_key_ch=64, 
+            ocr_val_ch=256, 
+            ocr_out_ch=512, 
+            context_regions=2
         )
         
     ),
@@ -116,15 +114,15 @@ config = dict(
         lane_and_direction_loss=dict(
             lane_cross_entropy_loss_weight=1.0,
             lane_dice_loss_weight=0.3,
-            direction_l2_loss_weight=2.0,
+            direction_l2_loss_weight=1.0,
+            direction_cos_loss_weight=1.0,
         ),
     ),
     optimizer = optimizers_dic[optimizer_type],
     scheduler = schedulers_dic[scheduler_type],
     train=dict(
-        epoch_size=epoch_sisze,
+        epoch_size=epoch_size,
         max_epochs=max_epochs,
-        epoch_sisze=epoch_sisze,
         checkpoint_interval=10,
         checkpoint_dir=os.path.join(project_dir, 'checkpoints'),
         visualize_output_path=os.path.join(project_dir, 'visualizations'),

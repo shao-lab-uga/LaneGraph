@@ -494,7 +494,7 @@ class ParallelDataLoader:
     
     def __init__(self, *args, **kwargs):
         """Initialize parallel data loader with multiple subloaders."""
-        self.num_workers = 4  # Number of worker threads
+        self.num_workers = 2  # Number of worker threads
         self.subloaders = []
         self.ready_events = []  # Events signaling when subloader has data ready
         self.wait_events = []   # Events to signal subloader to start preloading

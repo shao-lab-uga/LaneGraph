@@ -258,7 +258,7 @@ def model_training(gpu_id, world_size, config):
                                             direction_groundtruth= direction_context,
                                             visulize_all_samples=False,
                                             visualize_groundtruth=False)
-            if (global_step + 1) % 20 == 0:
+            if (global_step + 1) % 15 == 0:
                 train_dataloader.preload()
         scheduler.step()
         # [ ] Currently the validation is not implemented, but it can be added later.
@@ -270,7 +270,7 @@ def model_training(gpu_id, world_size, config):
 if __name__ == "__main__":
     # ============= Parse Argument =============
     parser = argparse.ArgumentParser(description="options")
-    parser.add_argument("--config", type=str, default="configs/train_reachable_lane_extraction_validation.py", help="config file")
+    parser.add_argument("--config", type=str, default="configs/train_reachable_lane_validation.py", help="config file")
     args = parser.parse_args()
     # ============= Load Configuration =============
     config = load_config(args.config)

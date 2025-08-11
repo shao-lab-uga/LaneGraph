@@ -24,10 +24,10 @@ validation_range = data_attributes_config.validation_range
 # ============= Train Parameters =================
 num_machines = 1
 gpu_ids = [0]
-batch_size = 8
+batch_size = 4
 preload_tiles=4
 epoch_sisze = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
-max_epochs = 300# Total number of epochs to train
+max_epochs = 400# Total number of epochs to train
 # ============= Optimizer Parameters =================
 optimizer_type = 'AdamW'
 optimizers_dic = dict(
@@ -50,7 +50,7 @@ scheduler_type = 'StepLR'
 schedulers_dic = dict(
     StepLR=dict(
         type='StepLR',      # StepLR scheduler
-        step_size = max_epochs // 5,
+        step_size = max_epochs // 8,
         gamma = 0.5
     ),
     CosineAnnealingWarmRestarts=dict(
@@ -116,7 +116,7 @@ config = dict(
         reachable_lane_extraction_loss=dict(
             lane_cross_entropy_loss_weight=1.0,
             lane_dice_loss_weight=0.3,
-            reachable_label_cross_entropy_loss_weight=1.0,
+            reachable_label_cross_entropy_loss_weight=5.0,
         ),
     ),
     optimizer = optimizers_dic[optimizer_type],

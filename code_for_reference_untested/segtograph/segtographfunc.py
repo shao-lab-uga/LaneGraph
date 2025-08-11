@@ -13,7 +13,7 @@ from math import sqrt
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from postprocessing import refine_lane_graph, connect_nearby_dead_ends, downsample_graph
+from utils.postprocessing_utils import refine_lane_graph, connect_nearby_dead_ends, downsample_graph
 
 
 graph_refine = refine_lane_graph

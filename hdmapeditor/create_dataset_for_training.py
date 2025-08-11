@@ -115,8 +115,8 @@ for region in regions:
 
                             color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
 
-                            cv2.line(lane, (x1, y1), (x2, y2), (255, 255, 255), 5)
-                            cv2.line(normal, (x1, y1), (x2, y2), color, 5)
+                            cv2.line(lane, (x1, y1), (x2, y2), (255, 255, 255), 5, lineType=cv2.LINE_AA)
+                            cv2.line(normal, (x1, y1), (x2, y2), color, 5, lineType=cv2.LINE_AA)
 
                     cv2.imwrite(outputfolder + "/sat_%d.jpg" % (counter_out), sat)
                     cv2.imwrite(

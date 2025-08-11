@@ -114,7 +114,7 @@ def model_training(gpu_id, world_size, config):
                     direction_groundtruth: The ground truth for direction [B, 2, H, W].
                 """
                 input_image, region_mask, lane_groundtruth, direction_groundtruth = inputs
-                
+
                 input_image = torch.from_numpy(input_image).float().to(gpu_id)  # [B, H, W, 3]
                 input_image = einops.rearrange(input_image, 'b h w c -> b c h w') # [B, 3, H, W]
 
@@ -135,17 +135,16 @@ def model_training(gpu_id, world_size, config):
                 """
                 Parse the outputs from the model.
                 Args:
-                    outputs: The outputs from the model. [B, 4, H ,W]
+                    outputs: (lane_logits, dir_map, bin_logits)
                 Returns:
                     lane_predicted: The predicted lane logits [B, 2, H ,W].
                     direction_predicted: The predicted direction logits [B, 2, H ,W].
                 """
-                lane_predicted = outputs[:, 0:2, :, :]  # [B, 2, H, W]
-                direction_predicted = outputs[:, 2:4, :, :]
-                return lane_predicted, direction_predicted
+                lane_predicted, direction_map_predicted = outputs
+                return lane_predicted, direction_map_predicted
 
-            lane_predicted, direction_predicted = parse_outputs(model.forward(input_image))
-            lane_and_direction_loss_dic = lane_and_direction_loss.compute(lane_predicted, direction_predicted, region_mask, lane_groundtruth, direction_groundtruth)
+            lane_predicted, direction_map_predicted = parse_outputs(model.forward(input_image))
+            lane_and_direction_loss_dic = lane_and_direction_loss.compute(lane_predicted, direction_map_predicted, region_mask, lane_groundtruth, direction_groundtruth)
             loss_value = torch.sum(sum(lane_and_direction_loss_dic.values()))
             # backward pass
             optimizer.zero_grad()
@@ -175,7 +174,7 @@ def model_training(gpu_id, world_size, config):
                                                     visualize_groundtruth=True
                                                     )
 
-            if (global_step + 1) % 20 == 0:
+            if (global_step + 1) % 10 == 0:
                 train_dataloader.preload()
         scheduler.step()
         # [ ] Currently the validation is not implemented, but it can be added later.
