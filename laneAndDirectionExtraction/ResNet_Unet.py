@@ -63,7 +63,6 @@ class DecoderBlock(nn.Module):
 class UnetResnet34(nn.Module):
     def __init__(self, model_config):
         super().__init__()
-        self.num_classes = model_config.num_classes
         self.in_channels = model_config.in_channels  # new input channels
 
         resnet34 = torchvision.models.resnet34(weights='DEFAULT')  # Use pretrained
@@ -115,7 +114,7 @@ class UnetResnet34(nn.Module):
             nn.ConvTranspose2d(
                 in_channels=filters[0], out_channels=filters[0], kernel_size=2, stride=2
             ),
-            nn.Conv2d(filters[0], self.num_classes, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(filters[0], 4, kernel_size=3, padding=1, bias=True),
         )
 
     def forward(self, x):
@@ -135,5 +134,6 @@ class UnetResnet34(nn.Module):
         d5 = self.decoder5(d4, e1)
 
         out = self.lastlayer(d5)
-
-        return out
+        lane_map = out[:, :2, :, :]
+        direction_map = out[:, 2:, :, :]
+        return lane_map, direction_map

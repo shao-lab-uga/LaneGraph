@@ -8,7 +8,6 @@ import numpy as np
 import os
 WINDOW_SIZE = 640
 
-
 def distance(a: Tuple[int, int], b: Tuple[int, int]) -> float:
     """Calculates euclidian distance between 2 points.
 
@@ -122,8 +121,7 @@ def trace_path(im, visited, start_row, start_col):
 
 
 def extract_graph_from_image(
-    im: np.ndarray, start_pos=None, epsilon: float = 2.0, 
-    connect_eps: float = 25.0, max_angle_diff: float = 30.0
+    im: np.ndarray, start_pos=None, epsilon: float = 2.0
 ) -> nx.Graph:
     """
     Extracts a graph from a thinned binary image using 8-connectivity and adds virtual
@@ -141,6 +139,7 @@ def extract_graph_from_image(
             queue.append((None, start))  # (previous node ID, (row, col))
 
         prev_node_id, (row, col) = queue.pop()
+        # path from (row, col)
         path, end_row, end_col = trace_path(im, visited, row, col)
 
         # Simplify the path if long enough
@@ -165,55 +164,16 @@ def extract_graph_from_image(
         for neighbor in neighbors:
             queue.append((prev_node, neighbor))
 
-    # # ---------------------------------------
-    # # Add virtual edges to fix fragmentation
-    # # ---------------------------------------
-    # endpoints = [n for n in G.nodes if G.degree[n] == 1]
-    # if len(endpoints) >= 2:
-    #     pts = np.array(endpoints)
-    #     tree = KDTree(pts)
-    #     for idx, p in enumerate(endpoints):
-    #         dists, indices = tree.query(p, k=6, distance_upper_bound=connect_eps)
-    #         for j, dist in zip(indices[1:], dists[1:]):
-    #             if j >= len(endpoints) or dist == np.inf:
-    #                 continue
-    #             q = endpoints[j]
-    #             if G.has_edge(p, q) or G.has_edge(q, p):
-    #                 continue
-
-    #             vec = np.array(q) - np.array(p)
-    #             vec_norm = np.linalg.norm(vec)
-    #             if vec_norm < 2:
-    #                 continue
-
-    #             def get_edge_dir(node):
-    #                 neighbors = list(G.neighbors(node))
-    #                 if not neighbors:
-    #                     return None
-    #                 return np.array(node) - np.array(neighbors[0])
-
-    #             vec1 = get_edge_dir(p)
-    #             vec2 = get_edge_dir(q)
-    #             if vec1 is None or vec2 is None:
-    #                 continue
-
-    #             angle1 = np.arccos(np.clip(np.dot(vec / vec_norm, vec1 / np.linalg.norm(vec1)), -1.0, 1.0)) * 180 / np.pi
-    #             angle2 = np.arccos(np.clip(np.dot(-vec / vec_norm, vec2 / np.linalg.norm(vec2)), -1.0, 1.0)) * 180 / np.pi
-    #             if angle1 > max_angle_diff or angle2 > max_angle_diff:
-    #                 continue
-
-    #             G.add_edge(p, q)
-
     return G
 
 
-def direct_graph_from_vector_map(G: nx.Graph, vector_map: np.ndarray) -> nx.DiGraph:
+def direct_graph_from_direction_map(G: nx.Graph, direction_map: np.ndarray) -> nx.DiGraph:
 
 
-    # Shifting vector map
-    if np.min(vector_map) >= 0:
-        vector_map = vector_map.astype(np.float64)
-        vector_map = vector_map - 127
+    # Shifting direction map
+    if np.min(direction_map) >= 0:
+        direction_map = direction_map.astype(np.float64)
+        direction_map = direction_map - 127
 
     DirG = nx.DiGraph()
 
@@ -224,8 +184,8 @@ def direct_graph_from_vector_map(G: nx.Graph, vector_map: np.ndarray) -> nx.DiGr
         u_row, u_col = u
         v_row, v_col = v
 
-        u_vec = vector_map[u_row, u_col]
-        v_vec = vector_map[v_row, v_col]
+        u_vec = direction_map[u_row, u_col]
+        v_vec = direction_map[v_row, v_col]
 
         avg_vec = (u_vec + v_vec) / 2.0
 
@@ -237,9 +197,8 @@ def direct_graph_from_vector_map(G: nx.Graph, vector_map: np.ndarray) -> nx.DiGr
             DirG.add_edge(u, v)
         else:
             DirG.add_edge(v, u)
+
     return DirG
-
-
 
 
 def draw_inputs(
@@ -285,7 +244,7 @@ def draw_inputs(
     return out_lane, out_normal
 
 def draw_output(
-    G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None
+    G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None, draw_nodes: bool = False
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Generates inputs for turning lane extraction processes. Creates lane mask and normal map using directed graph.
 
@@ -321,21 +280,22 @@ def draw_output(
     for node in G.nodes():
         x, y = node[1], node[0]
         node_type = G.nodes[node].get("type", "unknown")
-        if node_type == "end":
-            cv2.circle(out_lane, (x, y), 5, (255, 0, 0), -1)
-            cv2.circle(out_normal, (x, y), 5, (255, 0, 0), -1)
-        elif node_type == "in":
-            cv2.circle(out_lane, (x, y), 5, (0, 255, 0), -1)
-            cv2.circle(out_normal, (x, y), 5, (0, 255, 0), -1)
-        elif node_type == "out":
-            cv2.circle(out_lane, (x, y), 5, (0, 0, 255), -1)
-            cv2.circle(out_normal, (x, y), 5, (0, 0, 255), -1)
-        elif node_type == "lane":
-            cv2.circle(out_lane, (x, y), 5, (0, 255, 255), -1)
-            cv2.circle(out_normal, (x, y), 5, (0, 255, 255), -1)
-        elif node_type == "link":
-            cv2.circle(out_lane, (x, y), 5, (255, 255, 0), -1)
-            cv2.circle(out_normal, (x, y), 5, (255, 255, 0), -1)
+        if draw_nodes:
+            if node_type == "end":
+                cv2.circle(out_lane, (x, y), 5, (255, 0, 0), -1)
+                cv2.circle(out_normal, (x, y), 5, (255, 0, 0), -1)
+            elif node_type == "in":
+                cv2.circle(out_lane, (x, y), 5, (0, 255, 0), -1)
+                cv2.circle(out_normal, (x, y), 5, (0, 255, 0), -1)
+            elif node_type == "out":
+                cv2.circle(out_lane, (x, y), 5, (0, 0, 255), -1)
+                cv2.circle(out_normal, (x, y), 5, (0, 0, 255), -1)
+            elif node_type == "lane":
+                cv2.circle(out_lane, (x, y), 5, (0, 255, 255), -1)
+                cv2.circle(out_normal, (x, y), 5, (0, 255, 255), -1)
+            elif node_type == "link":
+                cv2.circle(out_lane, (x, y), 5, (255, 255, 0), -1)
+                cv2.circle(out_normal, (x, y), 5, (255, 255, 0), -1)
 
     if save_path and image_name:
         cv2.imwrite(os.path.join(save_path, f"{image_name}.png"), out_lane)

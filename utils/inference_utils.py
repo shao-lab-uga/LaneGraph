@@ -6,7 +6,7 @@ import torch
 # Import new post-processing utilities
 import sys
 sys.path.append('..')
-from image_postprocessing import denormalize_image_for_display, encode_direction_vectors_to_image, apply_softmax_to_logits
+from utils.image_postprocessing import denormalize_image_for_display, encode_direction_vectors_to_image, apply_softmax_to_logits
 
 def load_model(model, checkpoint_path):
     """

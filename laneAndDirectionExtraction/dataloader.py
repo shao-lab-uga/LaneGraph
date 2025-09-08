@@ -248,8 +248,14 @@ class LaneAndDirectionDataloader:
                 tile_id = random.randint(0,self.preload_tiles-1)
                 x = random.randint(0, self.dataset_image_size-1-self.image_size)
                 y = random.randint(0, self.dataset_image_size-1-self.image_size)
-            # Validate crop
+            
+            
             if self._is_valid_crop(x, y, tile_id):
+                if np.sum(self.targets[tile_id, x+64:x+self.image_size-64, y+64:y+self.image_size-64,:]) < 100:
+                    continue
+                
+                if np.sum(self.masks[tile_id, x+64:x+self.image_size-64, y+64:y+self.image_size-64,:]) < 50*50:
+                    continue
                 selected_coords.append(((x, y), tile_id))
         
         # Create batch

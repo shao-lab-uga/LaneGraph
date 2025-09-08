@@ -122,31 +122,6 @@ class Dataloader:
         normal[:, :, 1] = new_normal_y
         return np.clip(normal, -0.9999, 0.9999)
     
-    # def _rotate_and_filter_links_nodes(self, locallinks, nodes, angle, image_size):
-    #     """Rotate links and nodes by -angle and discard out-of-bounds ones."""
-    #     # Rotate and filter links
-    #     rotated_links = []
-    #     for link in locallinks:
-    #         rotated = []
-    #         out_of_bounds = False
-    #         for x, y in link:
-    #             px, py = rotate([x, y], -angle, image_size)
-    #             if not (0 <= px <= image_size and 0 <= py <= image_size):
-    #                 out_of_bounds = True
-    #                 break
-    #             rotated.append((px, py))
-    #         if not out_of_bounds:
-    #             rotated_links.append(rotated)
-
-    #     # Rotate and filter nodes
-    #     rotated_nodes = {}
-    #     for nid, (x, y) in nodes.items():
-    #         px, py = rotate([x, y], -angle, image_size)
-    #         if 0 <= px <= image_size and 0 <= py <= image_size:
-    #             rotated_nodes[nid] = (px, py)
-
-    #     return rotated_links, rotated_nodes
-    
     def preload(self, ind=None):
 
         self.links = []

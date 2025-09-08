@@ -140,11 +140,11 @@ def model_training(gpu_id, world_size, config):
                     lane_predicted: The predicted lane logits [B, 2, H ,W].
                     direction_predicted: The predicted direction logits [B, 2, H ,W].
                 """
-                lane_predicted, direction_map_predicted = outputs
-                return lane_predicted, direction_map_predicted
+                lane_predicted, direction_predicted = outputs
+                return lane_predicted, direction_predicted
 
-            lane_predicted, direction_map_predicted = parse_outputs(model.forward(input_image))
-            lane_and_direction_loss_dic = lane_and_direction_loss.compute(lane_predicted, direction_map_predicted, region_mask, lane_groundtruth, direction_groundtruth)
+            lane_predicted, direction_predicted = parse_outputs(model.forward(input_image))
+            lane_and_direction_loss_dic = lane_and_direction_loss.compute(lane_predicted, direction_predicted, region_mask, lane_groundtruth, direction_groundtruth)
             loss_value = torch.sum(sum(lane_and_direction_loss_dic.values()))
             # backward pass
             optimizer.zero_grad()
@@ -163,16 +163,17 @@ def model_training(gpu_id, world_size, config):
                     lane_predicted = lane_predicted.detach().cpu().numpy()
                     direction_predicted = einops.rearrange(direction_predicted, 'b c h w -> b h w c')
                     direction_predicted = direction_predicted.detach().cpu().numpy()
-                    visualize_lane_and_direction(visualize_output_path, global_step,
-                                                    input_satellite_image=input_image,
-                                                    region_mask=region_mask,
-                                                    lane_predicted=lane_predicted,
-                                                    direction_predicted=direction_predicted,
-                                                    lane_groundtruth=lane_groundtruth,
-                                                    direction_groundtruth=direction_groundtruth,
-                                                    visulize_all_samples=False,
-                                                    visualize_groundtruth=True
-                                                    )
+                    if batch_idx % (log_interval * 5) == 0:
+                        visualize_lane_and_direction(visualize_output_path, global_step,
+                                                        input_satellite_image=input_image,
+                                                        region_mask=region_mask,
+                                                        lane_predicted=lane_predicted,
+                                                        direction_predicted=direction_predicted,
+                                                        lane_groundtruth=lane_groundtruth,
+                                                        direction_groundtruth=direction_groundtruth,
+                                                        visulize_all_samples=False,
+                                                        visualize_groundtruth=True
+                                                        )
 
             if (global_step + 1) % 10 == 0:
                 train_dataloader.preload()

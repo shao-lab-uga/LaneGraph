@@ -1,8 +1,6 @@
-# 25.812813, -80.202372
 
 import json
 import math
-from subprocess import Popen
 
 import os
 import sys

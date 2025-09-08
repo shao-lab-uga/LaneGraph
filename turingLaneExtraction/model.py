@@ -14,11 +14,9 @@ class LaneExtractionModel(nn.Module):
         """
         Forward pass for the Lane Extraction model.
         Args:
-            input_features_node_a: Input features for node A.
-            input_features_node_b: Input features for node B.
+            input_features_node: Input features for the node.
         Returns:
-            lane_predicted_a: Predicted lanes for node A.
-            lane_predicted_b: Predicted lanes for node B.
+            lane_predicted: Predicted turing lane
         """
         lane_predicted = self.lane_extraction_model(input_features_node)
 

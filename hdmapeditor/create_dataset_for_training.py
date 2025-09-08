@@ -1,23 +1,19 @@
-# 25.812813, -80.202372
 
 import json
 import math
-from subprocess import Popen
 
 import os
 import sys
 
 sys.path.append(os.path.dirname(sys.path[0]))
 
-from PIL import Image
 import numpy as np
-import scipy.misc
 import json
 import cv2
 import pickle
 from roadstructure import LaneMap
-
-
+import networkx as nx
+import pickle
 regions = json.load(open(sys.argv[1]))
 inputfolder = sys.argv[2]
 outputfolder = sys.argv[3]
@@ -57,6 +53,8 @@ for region in regions:
                 labels = pickle.load(open(folder + "/sat_%d_label.p" % (counter), "rb"))
             except:
                 break
+            roadlabel: LaneMap
+            masklabel: LaneMap
             roadlabel, masklabel = labels
 
             adv = 0
@@ -71,6 +69,9 @@ for region in regions:
 
             polygons = masklabel.findAllPolygons()
             # render masks, lanes, and normals (directions)
+
+
+
             for sr in [0, 1024, 2048]:
                 for sc in [0, 1024, 2048]:
                     sat = img[sr : sr + 2048, sc : sc + 2048, :]
@@ -78,7 +79,63 @@ for region in regions:
                     normal = np.zeros_like(sat) + 127
                     lane = np.zeros_like(sat)
                     margin = 128
+                    # for ease of evaluations, the ground truth nx.Graph should be constructed
+                    # 1) undirected graph at non-intersection areas
+                    # 2) directed graph at non-intersection areas
+                    # 3) final full directed graph
+                    undirected_nonintersection_graph = nx.Graph()
+                    directed_nonintersection_graph = nx.DiGraph()
+                    full_directed_graph = nx.DiGraph()
+                    # add nodes first
+                    node_position_id_map = {}
+                    for nid, p in roadlabel.nodes.items():
+                        node_x = p[0] - sc - margin
+                        node_y = p[1] - sr - margin
+                        if node_x < 0 or node_x >= 2048 or node_y < 0 or node_y >= 2048:
+                            continue
+                        node_type = roadlabel.nodeType[nid]
+                        
+                        if node_type == "way":
+                            undirected_nonintersection_graph.add_node(nid, pos=(node_x, node_y), type='way')
+                            directed_nonintersection_graph.add_node(nid, pos=(node_x, node_y), type='way')
+                            full_directed_graph.add_node(nid, pos=(node_x, node_y), type='way')
+                        elif node_type == "link":
+                            # the link nodes should be only added to the full directed graph
+                            full_directed_graph.add_node(nid, pos=(node_x, node_y), type='link')
+                        else:
+                            raise ValueError("Unknown node type: %s" % node_type)
+                        node_position_id_map[(node_x, node_y)] = nid
+                    # add edges
+                    for nid, nei in roadlabel.neighbors.items():
+                        node_x1 = roadlabel.nodes[nid][0] - sc - margin
+                        node_y1 = roadlabel.nodes[nid][1] - sr - margin
 
+                        for nn in nei:
+                            node_x2 = roadlabel.nodes[nn][0] - sc - margin
+                            node_y2 = roadlabel.nodes[nn][1] - sr - margin
+                            # if edge out of range, ignore
+                            if (node_x1, node_y1) in node_position_id_map and (node_x2, node_y2) in node_position_id_map:
+                                if roadlabel.edgeType[(nid, nn)] == "way":
+                                    # add both direction for the undirected graph
+                                    undirected_nonintersection_graph.add_edge(nid, nn)
+                                    undirected_nonintersection_graph.add_edge(nn, nid)
+                                    # add only the directed edge for the directed graph
+                                    directed_nonintersection_graph.add_edge(nid, nn)
+                                    # add only the directed edge for the full directed graph
+                                    full_directed_graph.add_edge(nid, nn)
+                                elif roadlabel.edgeType[(nid, nn)] == "link":
+                                    # only add the directed edge for the full directed graph
+                                    full_directed_graph.add_edge(nid, nn)
+                    # save the graphs
+                    with open(os.path.join(outputfolder, f"undirected_nonintersection_graph_{counter_out}.gpickle"), 'wb') as f:
+                        pickle.dump(undirected_nonintersection_graph, f, pickle.HIGHEST_PROTOCOL)
+                    with open(os.path.join(outputfolder, f"directed_nonintersection_graph_{counter_out}.gpickle"), 'wb') as f:
+                        pickle.dump(directed_nonintersection_graph, f, pickle.HIGHEST_PROTOCOL)
+                    with open(os.path.join(outputfolder, f"full_directed_graph_{counter_out}.gpickle"), 'wb') as f:
+                        pickle.dump(full_directed_graph, f, pickle.HIGHEST_PROTOCOL)
+
+
+                    print("number of nodes", undirected_nonintersection_graph.number_of_nodes(), directed_nonintersection_graph.number_of_nodes(), full_directed_graph.number_of_nodes())
                     # draw mask
                     for polygon in polygons:
                         polygon_list = []
@@ -101,22 +158,20 @@ for region in regions:
                         y1 = roadlabel.nodes[nid][1] - sr - margin
 
                         for nn in nei:
-                            if roadlabel.edgeType[(nid, nn)] != "way":
-                                continue
-
                             x2 = roadlabel.nodes[nn][0] - sc - margin
                             y2 = roadlabel.nodes[nn][1] - sr - margin
 
-                            dx = x2 - x1
-                            dy = y2 - y1
-                            l = math.sqrt(float(dx * dx + dy * dy)) + 0.001
-                            dx /= l
-                            dy /= l
+                            if roadlabel.edgeType[(nid, nn)] == "way":
+                                dx = x2 - x1
+                                dy = y2 - y1
+                                l = math.sqrt(float(dx * dx + dy * dy)) + 0.001
+                                dx /= l
+                                dy /= l
 
-                            color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
+                                color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
 
-                            cv2.line(lane, (x1, y1), (x2, y2), (255, 255, 255), 5, lineType=cv2.LINE_AA)
-                            cv2.line(normal, (x1, y1), (x2, y2), color, 5, lineType=cv2.LINE_AA)
+                                cv2.line(lane, (x1, y1), (x2, y2), (255, 255, 255), 5, lineType=cv2.LINE_AA)
+                                cv2.line(normal, (x1, y1), (x2, y2), color, 5, lineType=cv2.LINE_AA)
 
                     cv2.imwrite(outputfolder + "/sat_%d.jpg" % (counter_out), sat)
                     cv2.imwrite(

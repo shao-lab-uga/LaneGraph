@@ -13,7 +13,7 @@ from utils.inference_utils import visualize_lane_and_direction_inference, load_m
 
 import sys
 sys.path.append('..')
-from image_postprocessing import normalize_image_for_model_input
+from utils.image_postprocessing import normalize_image_for_model_input
 
 
 def setup(config, gpu_id):

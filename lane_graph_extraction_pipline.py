@@ -27,6 +27,7 @@ from turingLaneExtraction.model import LaneExtractionModel
 from reachableLaneValidation.model import ReachableLaneValidationModel
 from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
 from utils.postprocessing_utils import refine_lane_graph, connect_nearby_dead_ends, refine_lane_graph_with_curves
+from utils.image_postprocessing import encode_direction_vectors_to_image
 
 
 class LaneGraphExtraction():
@@ -101,10 +102,9 @@ class LaneGraphExtraction():
         input_satellite_image = einops.rearrange(input_satellite_image, 'h w c -> 1 c h w')  # [1, 3, H, W]
 
         with torch.no_grad():
-            outputs = self.lane_and_direction_extraction_model(input_satellite_image) # [B, 4, H, W]
-        outputs = outputs.cpu().numpy()
-        lane_predicted = outputs[:, 0:2, :, :]  # [B, 2, H, W]
-        direction_predicted = outputs[:, 2:4, :, :] # [B, 2, H, W]
+            lane_predicted, direction_predicted = self.lane_and_direction_extraction_model(input_satellite_image) # [B, 4, H, W]
+        lane_predicted = lane_predicted.cpu().numpy()
+        direction_predicted = direction_predicted.cpu().numpy()
 
         lane_predicted = einops.rearrange(lane_predicted, 'b c h w -> b h w c')
         direction_predicted = einops.rearrange(direction_predicted, 'b c h w -> b h w c')
@@ -117,14 +117,28 @@ class LaneGraphExtraction():
         direction_predicted_image = np.zeros((self.image_size, self.image_size, 2))
         direction_predicted_image[:,:,0] = np.clip(direction_predicted[0,:,:,0],-1,1) * 127 + 127
         direction_predicted_image[:,:,1] = np.clip(direction_predicted[0,:,:,1],-1,1) * 127 + 127
+        def margin_mask_bool(img, margin=10):
+            """True on the margins, False elsewhere."""
+            h, w = img.shape[:2]
+            y = np.arange(h)[:, None]
+            x = np.arange(w)[None, :]
+            m = (y < margin) | (y >= h - margin) | (x < margin) | (x >= w - margin)
+            return m  # shape (H, W), dtype=bool
+
+        border_mask = margin_mask_bool(lane_predicted_image, margin=40)
+        lane_predicted_image[border_mask] = 0
+        direction_predicted_image[border_mask] = 127
+
         Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
 
+        Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save("direction_predicted.jpg")
         lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
         threshold = 32
         lane_predicted_image = lane_predicted_image >= threshold
         lane_predicted_image = morphology.thin(lane_predicted_image)
+        #
         lane_graph = segmentation2graph.extract_graph_from_image(lane_predicted_image)
-        lane_graph = segmentation2graph.direct_graph_from_vector_map(lane_graph, direction_predicted_image)
+        lane_graph = segmentation2graph.direct_graph_from_direction_map(lane_graph, direction_predicted_image)
 
         return lane_graph
 
@@ -496,7 +510,7 @@ class LaneGraphExtraction():
         return ax
 
 
-    def extract_lane_graph(self, input_satellite_image_path, gpu_id=0):
+    def extract_lane_graph(self, input_satellite_image_path, gpu_id=0, output_path='./'):
         """
         Extracts lane graph from the satellite image.
         
@@ -507,43 +521,45 @@ class LaneGraphExtraction():
             nx.DiGraph: Extracted lane graph.
         """
         print("Extracting lane graph from the satellite image...")
+        if not os.path.exists(output_path):
+            os.makedirs(output_path)
         image_name = os.path.basename(input_satellite_image_path)
         input_satellite_image = imageio.imread(input_satellite_image_path)
         
         # # Step 1: Lane and Direction Extraction
         lane_graph = self._extract_lane_and_direction(input_satellite_image)
         lane_graph = refine_lane_graph(lane_graph, isolated_threshold=16, spur_threshold=0)
-        lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=16)
-        # lane_graph = refine_lane_graph_with_curves(lane_graph)
-        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph, './UGAsat_img_output/')
-        
-        # # # Step 2: Reachable Lane Extraction
-        # intersection_center = (self.image_size // 2, self.image_size // 2)
-        # reachable_node_paris = self.extract_valid_turining_pairs(lane_graph, 
-        #                                                   input_satellite_image, 
-        #                                                   direction_predicted, 
-        #                                                   intersection_center, 
-        #                                                   gpu_id)
-        # print(f"Number of reachable node pairs: {len(reachable_node_paris)}")
-        #  # Step 3: Lane Extraction
-        # lane_graph = self._extract_turning_lane(lane_graph, 
-        #                                          reachable_node_paris, 
-        #                                          input_satellite_image, 
-        #                                          direction_predicted, 
-        #                                          gpu_id,
-        #                                          radius=5.0)
-        # for node in lane_graph.nodes:
-        #      print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
-        # segmentation2graph.draw_output(lane_graph, './UGAsat_img_output/', image_name=image_name)
+        # lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=5)
+        lane_graph = refine_lane_graph_with_curves(lane_graph)
+        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph, output_path)
+        print(f"Number of nodes in lane graph: {len(lane_graph.nodes)}")
+        # # Step 2: Reachable Lane Extraction
+        intersection_center = (self.image_size // 2, self.image_size // 2)
+        reachable_node_paris = self.extract_valid_turining_pairs(lane_graph, 
+                                                          input_satellite_image, 
+                                                          direction_predicted, 
+                                                          intersection_center, 
+                                                          gpu_id)
+        print(f"Number of reachable node pairs: {len(reachable_node_paris)}")
+         # Step 3: Lane Extraction
+        lane_graph = self._extract_turning_lane(lane_graph, 
+                                                 reachable_node_paris, 
+                                                 input_satellite_image, 
+                                                 direction_predicted, 
+                                                 gpu_id,
+                                                 radius=5.0)
+        for node in lane_graph.nodes:
+             print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
+        segmentation2graph.draw_output(lane_graph, output_path, image_name=image_name)
 
-        # lanes_and_links_gdf = self.extract_lanes_and_links_with_fids(lane_graph,
-        #     origin=(0, 0), # Assuming origin is (0, 0) for simplicity.
-        #     resolution=(0.125, -0.125), # 0.125 meters/pixel.
-        #     output_path="lanes_and_links.geojson"
-        # )
+        lanes_and_links_gdf = self.extract_lanes_and_links_with_fids(lane_graph,
+            origin=(0, 0), # Assuming origin is (0, 0) for simplicity.
+            resolution=(0.125, -0.125), # 0.125 meters/pixel.
+            output_path=os.path.join(output_path, f"lane_links_{image_name}.geojson")
+        )
 
-        # ax = self.visualize_lanes_and_links(lanes_and_links_gdf)
-        # plt.savefig(f"./UGAsat_img_output/lanes_and_links_{image_name}.png")
+        ax = self.visualize_lanes_and_links(lanes_and_links_gdf)
+        plt.savefig(os.path.join(output_path, f"lane_links_{image_name}.png"))
         return 
 
 
@@ -554,7 +570,7 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config)
-    input_satellite_img_path = "raw_data/UGA_Intersections/google_satellite_33.95736108562451_-83.3768069089114_80m_640px.jpg"  # Path to the input satellite image
+    input_satellite_img_path = "google_satellite_33.818437_-84.351657_80.0m_640px.jpg"  # Path to the input satellite image
     lane_graph_extraction.extract_lane_graph(input_satellite_img_path, gpu_id=0)
     # # Get all satellite images from UGAsat_img directory
     # UGAsat_img_dir = "raw_data/UGA_Intersections"

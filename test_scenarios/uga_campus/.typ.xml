@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2025-08-13 21:40:27 by Eclipse SUMO netconvert Version 1.18.0
+<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/netconvertConfiguration.xsd">
+
+    <input>
+        <opendrive-files value="uga.xodr"/>
+    </input>
+
+    <output>
+        <output-file value="tmp/map.net.xml"/>
+        <plain-output-prefix value="tmp/"/>
+    </output>
+
+    <junctions>
+        <no-turnarounds.except-deadend value="true"/>
+    </junctions>
+
+</configuration>
+-->
+
+<types version="1.16" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/types_file.xsd">
+    <type id="driving" priority="1" speed="13.89" disallow="pedestrian tram rail_urban rail rail_electric rail_fast ship" width="3.65"/>
+
+</types>

@@ -214,8 +214,6 @@ def downsample_graph(
     
     return downsampled_graph
 
-
-
 def connect_nearby_dead_ends(
     graph: nx.DiGraph,
     connection_threshold: float = 30.0

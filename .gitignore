@@ -20,3 +20,5 @@ validation_laneExtraction*/*
 **/__pycache__/*
 # Data files
 exp/*
+
+deprecated/*

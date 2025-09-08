@@ -1,11 +1,11 @@
 import torch.nn as nn
-import torch.nn.functional as F
 from laneAndDirectionExtraction.HRNetW32_OCR import HRNetW32_OCR
+from laneAndDirectionExtraction.ResNet_Unet import UnetResnet34
 
 class LaneAndDirectionExtractionModel(nn.Module):
     def __init__(self, lane_direction_extraction_model_config):
         super().__init__()
-        self.lane_and_direction_extraction_model = HRNetW32_OCR(lane_direction_extraction_model_config)
+        self.lane_and_direction_extraction_model = UnetResnet34(lane_direction_extraction_model_config)
 
 
     def forward(self, x):

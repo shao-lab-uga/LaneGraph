@@ -24,7 +24,7 @@ num_bins = 36
 # ============= Train Parameters =================
 num_machines = 1
 gpu_ids = [0,1]
-batch_size = 1
+batch_size = 4
 preload_tiles=4
 epoch_size = len(training_range) * dataset_image_size * dataset_image_size // (batch_size * input_image_size * input_image_size)
 max_epochs = 400  # Total number of epochs to train
@@ -103,10 +103,11 @@ config = dict(
     models=dict(
 
         lane_and_direction_extraction_model=dict(
-            ocr_key_ch=64, 
-            ocr_val_ch=256, 
-            ocr_out_ch=512, 
-            context_regions=2
+            # ocr_key_ch=64, 
+            # ocr_val_ch=256, 
+            # ocr_out_ch=512, 
+            # context_regions=2
+            in_channels = 3,  
         )
         
     ),
@@ -115,7 +116,7 @@ config = dict(
             lane_cross_entropy_loss_weight=1.0,
             lane_dice_loss_weight=0.3,
             direction_l2_loss_weight=1.0,
-            direction_cos_loss_weight=1.0,
+            direction_cos_loss_weight=0.0,
         ),
     ),
     optimizer = optimizers_dic[optimizer_type],
