@@ -1,12 +1,12 @@
-import numpy as np
 import threading
-import scipy.ndimage
 import time
 import random
 import cv2
 import json
 import math
 import os
+import scipy.ndimage
+import numpy as np
 import imageio.v3 as imageio
 from utils.config_utils import load_config
 

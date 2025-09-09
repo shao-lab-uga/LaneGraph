@@ -4,15 +4,15 @@ import argparse
 import einops
 import warnings
 warnings.filterwarnings("ignore")
+import numpy as np
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 from model import ReachableLaneValidationModel
-from reachableLaneValidation.reachable_lane_extraction_validation_loss import ReachableLaneExtractionValidationLoss
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
 from reachableLaneValidation.dataloader import get_dataloaders
 from utils.inference_utils import visualize_reachable_lane
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
-import numpy as np
+from reachableLaneValidation.reachable_lane_extraction_validation_loss import ReachableLaneExtractionValidationLoss
 
 
 def setup(config, gpu_id):

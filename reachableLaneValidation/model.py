@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torchvision.models as models
 import torch.nn.functional as F
 from reachableLaneValidation.model_segmentation import UnetResnet34
 from reachableLaneValidation.model_classification import Resnet34Classifier

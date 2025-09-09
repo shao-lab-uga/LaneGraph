@@ -4,12 +4,12 @@ import argparse
 import einops
 import warnings
 warnings.filterwarnings("ignore")
+from tqdm import tqdm
 from laneAndDirectionExtraction.model import UnetResnet34
 from utils.config_utils import load_config
 from laneAndDirectionExtraction.dataloader import get_dataloaders
 from utils.inference_utils import visualizatize_lane_and_direction, load_model
-from tqdm import tqdm
-import scipy.ndimage
+
 
 def setup(config, gpu_id):
     """
@@ -98,8 +98,6 @@ def model_inference(gpu_id, world_size, config):
             if (global_step + 1) % 50 == 0:
                 test_dataloader.preload()
                 
-            
-
 if __name__ == "__main__":
     # ============= Parse Argument =============
     parser = argparse.ArgumentParser(description="options")

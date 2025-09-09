@@ -1,7 +1,4 @@
-import torch
 import torch.nn as nn
-import torchvision.models as models
-import torch.nn.functional as F
 from turingLaneExtraction.model_segmentation import UnetResnet34
 
 class LaneExtractionModel(nn.Module):

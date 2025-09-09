@@ -1,7 +1,8 @@
+import numpy as np
+import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import geopandas as gpd
-import numpy as np
+
 def resample_line_points(line, num_points=50):
     """Uniformly sample a fixed number of points along the line."""
     return np.array([[pt.x, pt.y] for pt in [line.interpolate(d) for d in np.linspace(0, line.length, num_points)]])

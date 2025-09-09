@@ -1,23 +1,16 @@
+import os
 import cv2
-import argparse
-import pyproj
 import torch
-import scipy.ndimage
-from PIL import Image
 import einops
+import argparse
+import scipy.ndimage
 import numpy as np
+from PIL import Image
 from typing import Tuple
 from itertools import product
 from skimage import morphology
 import imageio.v3 as imageio
 from scipy.spatial import KDTree
-import geopandas as gpd
-import pyproj
-from shapely.geometry import LineString
-import pandas as pd
-import os
-import networkx as nx
-import pandas as pd
 import matplotlib.pyplot as plt
 import utils.segmentation2graph as segmentation2graph
 from utils.config_utils import load_config

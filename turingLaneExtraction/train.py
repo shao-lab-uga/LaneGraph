@@ -4,15 +4,18 @@ import argparse
 import einops
 import warnings
 warnings.filterwarnings("ignore")
+import numpy as np
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 from model import LaneExtractionModel
 from turning_lane_extraction_loss import TurningLaneExtractionLoss
+from utils.inference_utils import visualize_lane
 from utils.config_utils import load_config
 from utils.training_utils import load_checkpoint, save_checkpoint
 from dataloader import get_dataloaders
-from utils.inference_utils import visualize_lane
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
-import numpy as np
+
+
+
 
 
 def setup(config, gpu_id):

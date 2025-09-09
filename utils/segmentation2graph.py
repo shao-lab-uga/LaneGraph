@@ -1,11 +1,10 @@
-from collections import defaultdict
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from scipy.spatial import KDTree
+import os
 import cv2
 import networkx as nx
 import numpy as np
-import os
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, DefaultDict
+
 WINDOW_SIZE = 640
 
 def distance(a: Tuple[int, int], b: Tuple[int, int]) -> float:
@@ -382,7 +381,7 @@ def annotate_node_types(
 
 
 def get_node_types(G: nx.DiGraph) -> Dict[str, List[Tuple[int, int]]]:
-    node_types = defaultdict(list)
+    node_types = DefaultDict(list)
     for node, data in G.nodes(data=True):
         node_type = data.get("type")
         if node_type is None:

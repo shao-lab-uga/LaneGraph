@@ -1,10 +1,9 @@
-from PIL import Image 
-import numpy as np
 import os
-import torch
-
-# Import new post-processing utilities
 import sys
+import torch
+import numpy as np
+from PIL import Image 
+# Import new post-processing utilities
 sys.path.append('..')
 from utils.image_postprocessing import denormalize_image_for_display, encode_direction_vectors_to_image, apply_softmax_to_logits
 

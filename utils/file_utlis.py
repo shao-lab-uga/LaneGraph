@@ -3,7 +3,6 @@ import re
 import numpy as np
 import pandas as pd
 import xml.etree.ElementTree as ET
-from geo_utils import lonlat_to_local_m
 
 def get_files_with_extension(folder_path = '', file_extension = '.parquet'):
 

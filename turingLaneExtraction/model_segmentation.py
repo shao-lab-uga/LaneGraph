@@ -1,8 +1,6 @@
 import torch
 import torchvision
 import torch.nn as nn
-import torch.nn.functional as F
-
 
 class DecoderBlock(nn.Module):
     """Upscaling then double conv"""

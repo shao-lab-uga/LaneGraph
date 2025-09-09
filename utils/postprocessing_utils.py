@@ -10,9 +10,9 @@ extracted from segmentation outputs, including:
 """
 
 import numpy as np
-from typing import Dict, List, Tuple, Set
 import networkx as nx
-import itertools
+from typing import Dict, List, Tuple, Set
+
 
 def refine_lane_graph(
     lane_graph: nx.DiGraph,

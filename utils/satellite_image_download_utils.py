@@ -3,9 +3,8 @@ import math
 import requests
 from io import BytesIO
 from PIL import Image
-from utils.geo_utils import bbox_from_center_gsd, convert_pixel_size_to_meter, calculate_zoom_for_coverage_google, dedup_by_poisson
 from utils.file_utlis import extract_intersection_lat_lon_from_kml
-
+from utils.geo_utils import bbox_from_center_gsd, convert_pixel_size_to_meter, calculate_zoom_for_coverage_google, dedup_by_poisson
 
 def download_google_satellite_image_from_lat_lon(latitude, 
                                                  longitude, 
@@ -127,14 +126,12 @@ if __name__ == "__main__":
         token=""
     )
 
-    GOOGLE_API_KEY = "AIzaSyDfuWZN4vFSVXNusFDv5FAYl2xbCyv1eqE"
-
     result = download_google_satellite_image_from_lat_lon(
                 latitude=33.822905,
                 longitude=-84.362961,
                 save_path='.',
                 pixel_size=640,
-                api_key=GOOGLE_API_KEY
+                api_key=os.environ["GOOGLE_API_KEY"]
             )
     
     RESOLUTION = 0.125  # meters/pixel
