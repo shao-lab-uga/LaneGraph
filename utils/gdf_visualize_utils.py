@@ -69,14 +69,14 @@ def visualize_links_with_ref_lines(gdf_links, figsize=(10, 10), save_path=None):
     else:
         plt.show()
 
-def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20'):
+def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20', label_col='road_id'):
     """
-    Visualize grouped lanes with different colors based on road_id.
+    Visualize grouped lanes with different colors based on label_col.
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 12))
 
-    unique_ids = sorted(gdf_lanes["road_id"].unique())
+    unique_ids = sorted(gdf_lanes[label_col].unique())
     num_ids = len(unique_ids)
 
     # Create color map
@@ -85,13 +85,13 @@ def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20'):
 
     # Plot each group
     for rid in unique_ids:
-        group = gdf_lanes[gdf_lanes["road_id"] == rid]
+        group = gdf_lanes[gdf_lanes[label_col] == rid]
         group.plot(ax=ax, color=color_map[rid], label=rid, linewidth=2, alpha=0.8)
 
     ax.set_title("Lane Groups")
     ax.set_aspect('equal')
     ax.grid(True)
-    ax.legend(loc='best', title="road_id")
+    ax.legend(loc='best', title=label_col)
 
     return ax
 

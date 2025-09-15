@@ -210,37 +210,63 @@ def draw_inputs(
         save_path (Optional[Path], optional): Directory path to save outputs to. Defaults to None.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: _description_
+        Tuple[np.ndarray, np.ndarray]: lane mask and normal map
     """
-    out_lane = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 1))
-    out_normal = np.full((WINDOW_SIZE, WINDOW_SIZE, 2), 127, dtype=np.uint8)
+    out_lane = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 3), dtype=np.uint8)
+    out_normal = np.full((WINDOW_SIZE, WINDOW_SIZE, 3), 127, dtype=np.uint8)
 
+    # draw edges
     for u, v in G.edges():
-        ux = u[1]
-        uy = u[0]
-        vx = v[1]
-        vy = v[0]
+        ux, uy = u[1], u[0]
+        vx, vy = v[1], v[0]
 
         dx = vx - ux
         dy = vy - uy
-
-        length = np.sqrt(float((dx**2 + dy**2))) + 0.001
+        length = np.sqrt(float(dx**2 + dy**2)) + 1e-6
         dx /= length
         dy /= length
         color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
 
-        cv2.line(out_lane, (ux, uy), (vx, vy), (255, 255, 255), 5)
-        cv2.line(out_normal, (ux, uy), (vx, vy), color, 5)
+        cv2.line(out_lane, (ux, uy), (vx, vy), (255, 255, 255), 2)
+        cv2.line(out_normal, (ux, uy), (vx, vy), color, 2)
+
+    # draw nodes and annotate with type + degree
+    for node in G.nodes():
+        node_type = G.nodes[node].get("type", "unknown")
+        x, y = node[1], node[0]
+        in_deg, out_deg = G.in_degree(node), G.out_degree(node)
+
+        # choose color by type
+        if node_type == "in":
+            color = (0, 255, 0)     # Green
+        elif node_type == "out":
+            color = (0, 0, 255)     # Red
+        elif node_type == "lane":
+            color = (0, 255, 255)   # Cyan
+        elif node_type == "split":
+            color = (255, 0, 255)   # Magenta
+        elif node_type == "merge":
+            color = (255, 255, 0)   # Yellow
+        else:
+            color = (200, 200, 200) # Gray fallback
+
+        # draw node
+        cv2.circle(out_lane, (x, y), 4, color, -1)
+        cv2.circle(out_normal, (x, y), 4, color, -1)
+
+        # annotate in/out degree
+        text = f"{in_deg},{out_deg},{node_type}"
+        cv2.putText(
+            out_lane, text, (x + 6, y - 6),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1, cv2.LINE_AA
+        )
 
     if save_path:
         cv2.imwrite(os.path.join(save_path, "lane.png"), out_lane)
-        save_normal_arr = np.full(
-            (WINDOW_SIZE, WINDOW_SIZE, 3), 127, dtype=out_normal.dtype
-        )
-        save_normal_arr[:, :, 0:2] = out_normal
-        cv2.imwrite(os.path.join(save_path, "normal.png"), save_normal_arr)
+        cv2.imwrite(os.path.join(save_path, "normal.png"), out_normal)
 
     return out_lane, out_normal
+
 
 def draw_output(
     G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None, draw_nodes: bool = False
@@ -306,76 +332,38 @@ def draw_output(
 
     return out_lane, out_normal
 
-def annotate_node_types(
-    G: nx.DiGraph, center: Tuple[int, int] = (320, 320)
-) -> nx.DiGraph:
-    """Annotates nodes in graph based off distance to center point.
-
-    Annotates nodes in each connected component with the "type" attibute. This is done with the following logic for each node:
-    1. All nodes located within 120 pixels of the image edge will be type "end".
-    2. The furthest degree 1 node of each connected component will be of type "end".
-    3. Remaining degree 1 nodes of each connected component will be of type "in" or "out".
-        - If the nearest edge is pointed to the node, the type will be "in".
-        - If the nearest edge is pointed away the node, the type will be "out".
-    4. All remaining nodes will be of type "lane".
-
-    Args:
-        G (nx.DiGraph): Directed graph of intersection lanes.
-        center (Tuple[int,int]): Intersection center coordinate tuple of (row, col). Defaults to (320,320).
-
-    Returns:
-        nx.DiGraph: Directed graph of intersection lanes with typed nodes.
+def annotate_node_types(G: nx.DiGraph) -> nx.DiGraph:
     """
-    EDGE_MARGIN = 120
+    Annotate node types in a directed lane graph:
+    - "in":  entry boundary (in_degree=0, out_degree=1)
+    - "out": exit boundary (in_degree=1, out_degree=0)
+    - "split": junction with more outgoing than incoming
+    - "merge": junction with more incoming than outgoing
+    - "lane": intermediate lane node
+    """
+    for node in G.nodes():
+        in_degree = G.in_degree(node)
+        out_degree = G.out_degree(node)
+        total_degree = in_degree + out_degree
 
-    def near_edge(node_coord: Tuple[int, int]) -> bool:
-        """Checks if a coordinate is within the edge margin."""
-        row, col = node_coord
-        res = row <= (
-            row <= EDGE_MARGIN
-            or row >= WINDOW_SIZE - EDGE_MARGIN
-            or col <= EDGE_MARGIN
-            or col >= WINDOW_SIZE - EDGE_MARGIN
-        )
-        return res
-
-    for cc in nx.weakly_connected_components(G):
-        cc_subgraph = G.subgraph(cc)
-        deg_one_nodes = [
-            n
-            for n in cc_subgraph.nodes
-            if (cc_subgraph.in_degree(n) + cc_subgraph.out_degree(n)) == 1
-        ]
-
-        furthest_node = None
-        max_dist = -1
-        for n in deg_one_nodes:
-            dist = distance(n, center)
-            if dist > max_dist:
-                max_dist = dist
-                furthest_node = n
-
-        for node in cc_subgraph.nodes:
-            if near_edge(node):
-                G.nodes[node]["type"] = "end"
-                continue
-
-            deg = cc_subgraph.in_degree(node) + cc_subgraph.out_degree(node)
-            if deg != 1:
-                G.nodes[node]["type"] = "lane"
+        if total_degree >= 3:
+            if in_degree < out_degree:
+                G.nodes[node]["type"] = "split"
+            elif in_degree > out_degree:
+                G.nodes[node]["type"] = "merge"
             else:
-                if node == furthest_node:
-                    G.nodes[node]["type"] = "end"
-                else:
-                    indeg = cc_subgraph.in_degree(node)
-                    outdeg = cc_subgraph.out_degree(node)
-
-                    if indeg == 1:
-                        G.nodes[node]["type"] = "out"
-                    elif outdeg == 1:
-                        G.nodes[node]["type"] = "in"
-                    else:
-                        G.nodes[node]["type"] = "lane"
+                G.nodes[node]["type"] = "lane"
+        elif total_degree == 1:  # boundary
+            if in_degree == 0 and out_degree == 1:
+                G.nodes[node]["type"] = "in"
+            elif out_degree == 0 and in_degree == 1:
+                G.nodes[node]["type"] = "out"
+            else:
+                G.nodes[node]["type"] = "lane"
+        elif total_degree == 2 and in_degree == 1 and out_degree == 1:
+            G.nodes[node]["type"] = "lane"
+        else:
+            G.nodes[node]["type"] = "lane"
 
     return G
 

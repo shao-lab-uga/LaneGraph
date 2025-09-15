@@ -116,36 +116,58 @@ def get_mapbox_bbox_stitched(
 
 # -------- Example: 4096×4096 at 0.125 m/px around a center --------
 if __name__ == "__main__":
-    lat = 33.95736108562451
-    lon = -83.37680690891141
-    get_mapbox_bbox_stitched(
-        bbox=bbox_from_center_gsd(lat, lon, gsd_m_per_px=0.125, size_px=4096),
-        out_size=4096,
-        max_req_px=1024,  # safe under Mapbox's 1280 cap
-        out_file="athens_4096_0125m.jpg",
-        token=""
-    )
+    test_image_non_intersection_lat_lon = (33.818753, -84.352567)
+    test_image_intersection_lat_lon = (33.818439, -84.351647)
+    os.environ["GOOGLE_API_KEY"] = ""
+    # lat, lon = test_image_non_intersection_lat_lon
+    # get_mapbox_bbox_stitched(
+    #     bbox=bbox_from_center_gsd(lat, lon, gsd_m_per_px=0.125, size_px=4096),
+    #     out_size=4096,
+    #     max_req_px=1024,  # safe under Mapbox's 1280 cap
+    #     out_file="test_non_intersection.jpg",
+    #     token=os.environ["MAPBOX_API_TOKEN"]
+    # )
 
+    # lat, lon = test_image_intersection_lat_lon
+    # get_mapbox_bbox_stitched(
+    #     bbox=bbox_from_center_gsd(lat, lon, gsd_m_per_px=0.125, size_px=4096),
+    #     out_size=4096,
+    #     max_req_px=1024,  # safe under Mapbox's 1280 cap
+    #     out_file="test_intersection.jpg",
+    #     token=os.environ["MAPBOX_API_TOKEN"]
+    # )
+    lat, lon = test_image_non_intersection_lat_lon
     result = download_google_satellite_image_from_lat_lon(
-                latitude=33.822905,
-                longitude=-84.362961,
+                latitude=lat,
+                longitude=lon,
                 save_path='.',
+                image_tag="test_non_intersection",
+                pixel_size=640,
+                api_key=os.environ["GOOGLE_API_KEY"]
+            )
+
+    lat, lon = test_image_intersection_lat_lon
+    result = download_google_satellite_image_from_lat_lon(
+                latitude=lat,
+                longitude=lon,
+                save_path='.',
+                image_tag="test_intersection",
                 pixel_size=640,
                 api_key=os.environ["GOOGLE_API_KEY"]
             )
     
-    RESOLUTION = 0.125  # meters/pixel
-    PIXEL_SIZE = 1280  # pixels
-    kml_file = "./intersections/kml/intersections.kml"
-    satellite_image_save_path = "./intersections/satellite_images"
-    intersection_df = extract_intersection_lat_lon_from_kml(kml_file)
-    intersection_df = dedup_by_poisson(intersection_df)
-    cnt = 0
-    for index, row in intersection_df.iterrows():
-        get_mapbox_bbox_stitched(bbox=bbox_from_center_gsd(row['latitude'], row['longitude'], gsd_m_per_px=0.125, size_px=4096),
-        out_size=4096,
-        max_req_px=1024,  # safe under Mapbox's 1280 cap
-        out_file=os.path.join(satellite_image_save_path, f"sat_low_res_{str(cnt)}.jpg"),
-        token=os.environ["MAPBOX_API_TOKEN"]
-        )
-        cnt += 1
+    # RESOLUTION = 0.125  # meters/pixel
+    # PIXEL_SIZE = 1280  # pixels
+    # kml_file = "./intersections/kml/intersections.kml"
+    # satellite_image_save_path = "./intersections/satellite_images"
+    # intersection_df = extract_intersection_lat_lon_from_kml(kml_file)
+    # intersection_df = dedup_by_poisson(intersection_df)
+    # cnt = 0
+    # for index, row in intersection_df.iterrows():
+    #     get_mapbox_bbox_stitched(bbox=bbox_from_center_gsd(row['latitude'], row['longitude'], gsd_m_per_px=0.125, size_px=4096),
+    #     out_size=4096,
+    #     max_req_px=1024,  # safe under Mapbox's 1280 cap
+    #     out_file=os.path.join(satellite_image_save_path, f"sat_low_res_{str(cnt)}.jpg"),
+    #     token=os.environ["MAPBOX_API_TOKEN"]
+    #     )
+    #     cnt += 1

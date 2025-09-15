@@ -2,16 +2,21 @@ import os
 import cv2
 import torch
 import einops
+import pyproj
 import argparse
 import scipy.ndimage
 import numpy as np
 from PIL import Image
+import networkx as nx
+import geopandas as gpd
+from pyproj import CRS
 from typing import Tuple
 from itertools import product
 from skimage import morphology
 import imageio.v3 as imageio
-from scipy.spatial import KDTree
 import matplotlib.pyplot as plt
+from scipy.spatial import KDTree
+from shapely.geometry import LineString
 import utils.segmentation2graph as segmentation2graph
 from utils.config_utils import load_config
 from utils.inference_utils import load_model
@@ -118,7 +123,7 @@ class LaneGraphExtraction():
             m = (y < margin) | (y >= h - margin) | (x < margin) | (x >= w - margin)
             return m  # shape (H, W), dtype=bool
 
-        border_mask = margin_mask_bool(lane_predicted_image, margin=40)
+        border_mask = margin_mask_bool(lane_predicted_image, margin=20)
         lane_predicted_image[border_mask] = 0
         direction_predicted_image[border_mask] = 127
 
@@ -186,7 +191,6 @@ class LaneGraphExtraction():
 
         return input_features_node_a, input_features_node_b, input_features_validation
     
-
     def _make_lane_extraction_input(
         self, node_pair: Tuple[Tuple[int, int], Tuple[int, int]], input_satellite_image, direction_context, gpu_id=0
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -226,14 +230,12 @@ class LaneGraphExtraction():
 
         return input_features
 
-
-    def extract_valid_turining_pairs(self, lane_graph, input_satellite_image, direction_context, intersection_center, gpu_id=0):
+    def extract_valid_turning_pairs(self, lane_graph, input_satellite_image, direction_context, gpu_id=0):
         """
         Extracts valid turning pairs from the lane graph.
         
         Args:
             lane_graph (nx.DiGraph): Input lane graph.
-            intersection_center (Tuple[int, int]): Center of the intersection.
         
         Returns:
             List[Tuple[int, int]]: List of valid turning pairs.
@@ -241,7 +243,7 @@ class LaneGraphExtraction():
         print("Extracting valid turning pairs from the lane graph...")
         # Step 2: Reachable Lane Extraction
 
-        lane_graph = segmentation2graph.annotate_node_types(lane_graph, intersection_center)
+        
         node_types = segmentation2graph.get_node_types(lane_graph)
 
         
@@ -347,121 +349,126 @@ class LaneGraphExtraction():
         return lane_graph
 
     
-
-
     def pixel_to_geo(self, path, origin=(0, 0), resolution = (0.125, -0.125)):
         """Convert a pixel path to geographic coordinates (lon, lat or meters)."""
         lon0, lat0 = origin
         dx, dy = resolution
         return [(lon0 + x * dx, lat0 + y * dy) for (x, y) in path]
 
-    def extract_lanes_and_links_with_fids(self, lane_graph, origin=(0, 0), resolution=(0.125, -0.125), output_path="lane_links.geojson"):
-        import geopandas as gpd
-        from shapely.geometry import LineString
-        import pandas as pd
-        import networkx as nx
-        import pyproj
-        proj = pyproj.Proj(proj="utm", zone=51, datum="WGS84")  # use proper UTM zone
-        origin_lon, origin_lat = origin
-        origin_x, origin_y = proj(origin_lon, origin_lat)  # Convert origin to UTM coordinates
+    def extract_lanes_and_links_with_fids(
+        self,
+        lane_graph: nx.DiGraph,
+        origin=(0, 0),
+        resolution=(0.125, -0.125),
+        output_path="lane_links.geojson",
+        crs_proj: CRS = None,
+    ):
+        origin_x, origin_y = origin
         origin_m = (origin_x, origin_y)
+
         def pixel_to_meter(path, origin_m, resolution):
             x0, y0 = origin_m
             dx, dy = resolution
             return [(x0 + x * dx, y0 + y * dy) for (y, x) in path]
-    
+
         rows = []
         fid_counter = 0
-        node_to_fid = {}  # Maps (start_node, end_node) to fid for later reverse lookups
-    
+        node_to_fid = {}
+
         valid_lane_combinations = {
-            ("end", "out"),
-            ("in", "end")
+            ("in", "out"),
+            ("in", "split"),
+            ("split", "out"),
+            ("in", "merge"),
+            ("merge", "out"),
         }
-        valid_link_combinations = {
-            ("out", "in"),
-        }
-    
-        for src, src_data in lane_graph.nodes(data=True):
-            for tgt, tgt_data in lane_graph.nodes(data=True):
-                if src == tgt:
-                    continue
-                   
-                src_type = src_data.get("type")
-                tgt_type = tgt_data.get("type")
-    
-                is_lane = (src_type, tgt_type) in valid_lane_combinations
-                is_link = (src_type, tgt_type) in valid_link_combinations
-    
-                if is_lane or is_link:
-                    try:
-                        path = nx.shortest_path(lane_graph, src, tgt)
-                    except nx.NetworkXNoPath:
-                        continue
-                       
-                    geo_path = pixel_to_meter(path, origin_m=origin_m, resolution=resolution)
-                    geometry = LineString(geo_path)
-    
-                    fid = fid_counter
-                    fid_counter += 1
-    
-                    row = {
-                        "fid": str(fid),
-                        "type": "lane" if is_lane else "link",
-                        "subtype": f"{src_type}->{tgt_type}",
-                        "start_node_id": str(src),
-                        "end_node_id": str(tgt),
-                        "start_type": src_type,
-                        "end_type": tgt_type,
-                        "start_x": geo_path[0][0],
-                        "start_y": geo_path[0][1],
-                        "end_x": geo_path[-1][0],
-                        "end_y": geo_path[-1][1],
-                        "edge_nodes": str(path),
-                        "geometry": geometry,
-                        "from_fid": None,  # To be filled in second pass
-                        "to_fid": None     # To be filled in second pass
-                    }
-    
-                    node_to_fid[(str(src), str(tgt))] = fid
-                    rows.append(row)
-    
-        # --- Second pass: assign from_fid and to_fid for links ---
+        valid_link_combinations = {("out", "in")}
+        junction_types = {"in", "out", "split", "merge"}
+
+        def process_segment(path):
+            """Add one lane/link row from a node sequence."""
+            nonlocal fid_counter
+            if len(path) < 2:
+                return
+
+            src, tgt = path[0], path[-1]
+            src_type = lane_graph.nodes[src].get("type")
+            tgt_type = lane_graph.nodes[tgt].get("type")
+
+            is_lane = (src_type, tgt_type) in valid_lane_combinations
+            is_link = (src_type, tgt_type) in valid_link_combinations
+            if not (is_lane or is_link):
+                return
+
+            geo_path = pixel_to_meter(path, origin_m=origin_m, resolution=resolution)
+            geometry = LineString(geo_path)
+
+            fid = fid_counter
+            fid_counter += 1
+
+            row = {
+                "fid": str(fid),
+                "type": "lane" if is_lane else "link",
+                "subtype": f"{src_type}->{tgt_type}",
+                "start_node_id": str(src),
+                "end_node_id": str(tgt),
+                "start_type": src_type,
+                "end_type": tgt_type,
+                "start_x": geo_path[0][0],
+                "start_y": geo_path[0][1],
+                "end_x": geo_path[-1][0],
+                "end_y": geo_path[-1][1],
+                "edge_nodes": str(path),
+                "geometry": geometry,
+                "from_fid": None,
+                "to_fid": None,
+            }
+
+            node_to_fid[(str(src), str(tgt))] = fid
+            rows.append(row)
+
+        # --- Traverse graph: build segments from junctions ---
+        for node, data in lane_graph.nodes(data=True):
+            if data.get("type") in {"in", "split", "merge"}:
+                for succ in lane_graph.successors(node):
+                    path = [node, succ]
+                    current = succ
+                    while (
+                        lane_graph.nodes[current].get("type") not in junction_types
+                        and lane_graph.out_degree(current) == 1
+                    ):
+                        nxt = next(lane_graph.successors(current))
+                        path.append(nxt)
+                        current = nxt
+                    process_segment(path)
+
+        # --- Second pass: connect links <-> lanes ---
         for row in rows:
             if row["type"] == "link":
-                src = row["start_node_id"]
-                tgt = row["end_node_id"]
-    
-                # Find lanes that connect to this link
+                src, tgt = row["start_node_id"], row["end_node_id"]
                 for candidate in rows:
                     if candidate["type"] == "lane":
-                        # Upstream lane → this link
                         if candidate["end_node_id"] == src:
                             row["from_fid"] = str(candidate["fid"])
-                        # This link → downstream lane
-                        if candidate["start_node_id"] == tgt:
-                            row["to_fid"] = str(candidate["fid"])
-         # --- Second pass: assign from_fid and to_fid for lanes ---
-        for row in rows:
-            if row["type"] == "lane":
-                src = row["start_node_id"]
-                tgt = row["end_node_id"]
-    
-                # Find links that connect to this lane
-                for candidate in rows:
-                    if candidate["type"] == "link":
-                        # Upstream link → this lane
-                        if candidate["end_node_id"] == src:
-                            row["from_fid"] = str(candidate["fid"])
-                        # This lane → downstream link
                         if candidate["start_node_id"] == tgt:
                             row["to_fid"] = str(candidate["fid"])
 
-        gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=proj.srs)
-        gdf.drop(columns=["start_node_id", "end_node_id", "subtype", "edge_nodes"], inplace=True)
-        gdf.drop(columns=["start_x", "start_y", "end_x", "end_y"], inplace=True)
+        for row in rows:
+            if row["type"] == "lane":
+                src, tgt = row["start_node_id"], row["end_node_id"]
+                for candidate in rows:
+                    if candidate["type"] == "link":
+                        if candidate["end_node_id"] == src:
+                            row["from_fid"] = str(candidate["fid"])
+                        if candidate["start_node_id"] == tgt:
+                            row["to_fid"] = str(candidate["fid"])
+
+        gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=crs_proj)
+        gdf.drop(
+            columns=["start_node_id", "end_node_id", "subtype", "edge_nodes", "start_x", "start_y", "end_x", "end_y"],
+            inplace=True,
+        )
         gdf.to_file(output_path, driver="GeoJSON")
-    
         return gdf
 
 
@@ -521,29 +528,30 @@ class LaneGraphExtraction():
         
         # # Step 1: Lane and Direction Extraction
         lane_graph = self._extract_lane_and_direction(input_satellite_image)
-        lane_graph = refine_lane_graph(lane_graph, isolated_threshold=16, spur_threshold=0)
-        # lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=5)
+        lane_graph = refine_lane_graph(lane_graph, isolated_threshold=30, spur_threshold=10)
+        lane_graph = segmentation2graph.annotate_node_types(lane_graph)
+        lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=2)
+        lane_graph = segmentation2graph.annotate_node_types(lane_graph)
         lane_graph = refine_lane_graph_with_curves(lane_graph)
+        
         lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph, output_path)
         print(f"Number of nodes in lane graph: {len(lane_graph.nodes)}")
-        # # Step 2: Reachable Lane Extraction
-        intersection_center = (self.image_size // 2, self.image_size // 2)
-        reachable_node_paris = self.extract_valid_turining_pairs(lane_graph, 
-                                                          input_satellite_image, 
-                                                          direction_predicted, 
-                                                          intersection_center, 
-                                                          gpu_id)
-        print(f"Number of reachable node pairs: {len(reachable_node_paris)}")
-         # Step 3: Lane Extraction
-        lane_graph = self._extract_turning_lane(lane_graph, 
-                                                 reachable_node_paris, 
-                                                 input_satellite_image, 
-                                                 direction_predicted, 
-                                                 gpu_id,
-                                                 radius=5.0)
-        for node in lane_graph.nodes:
-             print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
-        segmentation2graph.draw_output(lane_graph, output_path, image_name=image_name)
+        # # # Step 2: Reachable Lane Extraction
+        # reachable_node_pairs = self.extract_valid_turning_pairs(lane_graph, 
+        #                                                   input_satellite_image, 
+        #                                                   direction_predicted, 
+        #                                                   gpu_id)
+        # print(f"Number of reachable node pairs: {len(reachable_node_pairs)}")
+        #  # Step 3: Lane Extraction
+        # lane_graph = self._extract_turning_lane(lane_graph, 
+        #                                          reachable_node_pairs, 
+        #                                          input_satellite_image, 
+        #                                          direction_predicted, 
+        #                                          gpu_id,
+        #                                          radius=5.0)
+        # for node in lane_graph.nodes:
+        #      print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
+        # segmentation2graph.draw_output(lane_graph, output_path, image_name=image_name)
 
         lanes_and_links_gdf = self.extract_lanes_and_links_with_fids(lane_graph,
             origin=(0, 0), # Assuming origin is (0, 0) for simplicity.
@@ -563,7 +571,7 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config)
-    input_satellite_img_path = "google_satellite_33.818437_-84.351657_80.0m_640px.jpg"  # Path to the input satellite image
+    input_satellite_img_path = "/home/hetianguo/Desktop/LaneGraph/test_non_intersection.jpg"  # Path to the input satellite image
     lane_graph_extraction.extract_lane_graph(input_satellite_img_path, gpu_id=0)
     # # Get all satellite images from UGAsat_img directory
     # UGAsat_img_dir = "raw_data/UGA_Intersections"

@@ -18,89 +18,117 @@ def refine_lane_graph(
     lane_graph: nx.DiGraph,
     isolated_threshold: float = 150.0,
     spur_threshold: float = 60.0,
-    three_edge_loop_threshold: float = 70.0
+    merge_threshold: float = 10.0,
 ) -> nx.DiGraph:
     """
-    Refine a lane graph by removing isolated components and short spurs.
+    Refine a lane graph by removing isolated components, short spurs,
+    and merging very close nodes.
     
     Args:
         lane_graph: Input lane graph
         isolated_threshold: Minimum total length for connected components to keep
         spur_threshold: Maximum length of spurs to remove
-        three_edge_loop_threshold: Threshold for three-edge loop detection (currently unused)
-        
+        merge_threshold: Distance threshold below which nodes are merged
+    
     Returns:
-        Refined graph with isolated components and spurs removed
+        Refined graph with isolated components removed, spurs removed,
+        and close nodes merged.
     """
-    # Find connected components using BFS
+    # --- Phase 1: remove small components & spurs ---
     component_assignments = {}
     for comp_id, component_nodes in enumerate(nx.weakly_connected_components(lane_graph)):
         for node in component_nodes:
             component_assignments[node] = comp_id
     component_stats = _calculate_component_statistics(lane_graph, component_assignments)
 
-    # Identify short spurs for removal
     spur_nodes = _identify_spur_nodes(lane_graph, spur_threshold)
-    
-    # Filter nodes based on component size and spur status
+
     def should_remove_node(node: Tuple[int, int]) -> bool:
         component_id = component_assignments[node]
         node_count, total_length = component_stats[component_id]
-        
         return (
-            node_count <= 1 or 
-            total_length <= isolated_threshold or
-            node in spur_nodes
+            node_count <= 1
+            or total_length <= isolated_threshold
+            or node in spur_nodes
         )
-    
 
     refined_graph = nx.DiGraph()
-    nodes_removed = 0
-    
     for node in lane_graph.nodes():
         if should_remove_node(node):
-            nodes_removed += 1
             continue
-
-        # Copy node to new graph
-        refined_graph.add_node(node)
-
-        # Filter outgoing neighbors
+        refined_graph.add_node(node, **lane_graph.nodes[node])
         for neighbor in lane_graph.successors(node):
             if not should_remove_node(neighbor):
                 refined_graph.add_edge(node, neighbor)
-    
-    return refined_graph
+
+    # --- Phase 2: merge very close nodes ---
+    nodes = list(refined_graph.nodes())
+    merged_map = {}  # old_node -> new_node
+    for i, n1 in enumerate(nodes):
+        if n1 in merged_map:  # already merged
+            continue
+        pos1 = np.array(refined_graph.nodes[n1].get("pos", (0, 0)))
+        for n2 in nodes[i + 1 :]:
+            if n2 in merged_map:
+                continue
+            pos2 = np.array(refined_graph.nodes[n2].get("pos", (0, 0)))
+            dist = np.linalg.norm(pos1 - pos2)
+            if dist < merge_threshold:
+                # Merge n2 into n1
+                merged_map[n2] = n1
+
+    # Build final merged graph
+    final_graph = nx.DiGraph()
+    for node in refined_graph.nodes():
+        root = merged_map.get(node, node)
+        if root not in final_graph:
+            final_graph.add_node(root, **refined_graph.nodes[root])
+
+    for u, v in refined_graph.edges():
+        u_root = merged_map.get(u, u)
+        v_root = merged_map.get(v, v)
+        if u_root != v_root:
+            final_graph.add_edge(u_root, v_root)
+
+    return final_graph
 
 def _calculate_component_statistics(
     graph: nx.DiGraph,
-    component_assignments: Dict[Tuple[int, int], int]
+    component_assignments: Dict[int, int]
 ) -> Dict[int, Tuple[int, float]]:
     """
     Calculate node count and total edge length for each component in a DiGraph.
-    
+
     Args:
-        graph: A NetworkX directed graph.
-        component_assignments: Mapping of node -> component ID.
-    
+        graph: A NetworkX directed graph with node positions in node['pos'] = (x, y).
+        component_assignments: Mapping of node_id -> component ID.
+
     Returns:
         Dict[component_id, (node_count, total_edge_length)].
     """
-    component_stats = {}
+    component_stats: Dict[int, Tuple[int, float]] = {}
+    visited_edges: Set[frozenset] = set()
 
-    for node, component_id in component_assignments.items():
-        if component_id not in component_stats:
-            component_stats[component_id] = (0, 0.0)
+    for node, comp_id in component_assignments.items():
+        if comp_id not in component_stats:
+            component_stats[comp_id] = (0, 0.0)
 
-        node_count, total_length = component_stats[component_id]
-        node_count += 1  # Increment node count
+        node_count, total_length = component_stats[comp_id]
+        node_count += 1
 
-        # Add edge lengths for all neighbors
         for neighbor in graph.neighbors(node):
-            edge_length = _calculate_euclidean_distance(node, neighbor)
-            total_length += edge_length / 2.0  # Divide by 2 to avoid double counting
+            edge_key = frozenset((node, neighbor))
+            if edge_key in visited_edges:
+                continue
 
-        component_stats[component_id] = (node_count, total_length)
+            edge_length = _calculate_euclidean_distance(
+                graph.nodes[node], graph.nodes[neighbor]
+            )
+
+            total_length += edge_length
+            visited_edges.add(edge_key)
+
+        component_stats[comp_id] = (node_count, total_length)
 
     return component_stats
 
@@ -125,7 +153,7 @@ def _identify_spur_nodes(
 
             # Total degree: in + out
             if graph.degree(neighbor) >= 3:
-                spur_length = _calculate_euclidean_distance(node, neighbor)
+                spur_length = _calculate_euclidean_distance(graph.nodes[node], graph.nodes[neighbor])
 
                 if spur_length < spur_threshold:
                     spur_nodes.add(node)
@@ -133,13 +161,10 @@ def _identify_spur_nodes(
     return spur_nodes
 
 
-def _calculate_euclidean_distance(
-    point1: Tuple[int, int], 
-    point2: Tuple[int, int]
-) -> float:
-    dx = point1[0] - point2[0]
-    dy = point1[1] - point2[1]
-    return np.sqrt(dx * dx + dy * dy)
+def _calculate_euclidean_distance(node_data1, node_data2):
+    x1, y1 = node_data1.get("pos", (0, 0))
+    x2, y2 = node_data2.get("pos", (0, 0))
+    return ((x1 - x2)**2 + (y1 - y2)**2) ** 0.5
 
 
 def add_bidirectional_edge(
@@ -219,37 +244,38 @@ def connect_nearby_dead_ends(
     connection_threshold: float = 30.0
 ) -> nx.DiGraph:
     """
-    Connect nearby dead-end nodes in a DiGraph to reduce fragmentation.
+    Connect nearby 'out' nodes to 'in' nodes in a DiGraph to reduce fragmentation.
 
     Args:
-        graph: The input directed graph.
-        connection_threshold: Max Euclidean distance to connect two dead ends.
+        graph: The input directed graph. Nodes must have a 'type' attribute (e.g., 'in', 'out').
+        connection_threshold: Max Euclidean distance to connect an 'out' to an 'in'.
 
     Returns:
-        The modified graph with new edges added between close dead ends.
+        The modified graph with new edges added between close 'out' and 'in' nodes.
     """
-    # Find dead-end nodes: nodes with exactly one outgoing edge
-    dead_end_nodes = [node for node in graph.nodes if graph.out_degree(node) == 1]
+    out_nodes = [n for n, d in graph.nodes(data=True) if d.get("type") == "out"]
+    in_nodes  = [n for n, d in graph.nodes(data=True) if d.get("type") == "in"]
 
-    for dead_end1 in dead_end_nodes:
-        closest_dead_end = None
+    for out_node in out_nodes:
+        closest_in = None
         min_distance = connection_threshold
 
-        for dead_end2 in dead_end_nodes:
-            if dead_end1 == dead_end2:
+        for in_node in in_nodes:
+            # skip if already connected
+            if graph.has_edge(out_node, in_node):
                 continue
+            dist = _calculate_euclidean_distance(graph.nodes[out_node], graph.nodes[in_node])
+            
+            if dist < min_distance:
+                min_distance = dist
+                closest_in = in_node
 
-            distance = _calculate_euclidean_distance(dead_end1, dead_end2)
-            if distance < min_distance:
-                min_distance = distance
-                closest_dead_end = dead_end2
-
-        # If a close enough dead-end node was found, connect them bidirectionally
-        if closest_dead_end is not None and not graph.has_edge(dead_end1, closest_dead_end):
-            graph.add_edge(dead_end1, closest_dead_end)
-            graph.add_edge(closest_dead_end, dead_end1)
+        # Add directed edge if found
+        if closest_in is not None:
+            graph.add_edge(out_node, closest_in)
 
     return graph
+
 
 
 
@@ -259,32 +285,50 @@ def refine_lane_graph_with_curves(
 ) -> nx.DiGraph:
     """
     Refine a directed lane graph:
-    - Extract paths per connected component (undirected)
-    - Simplify using Douglas-Peucker
-    - Output a clean DiGraph with consistent direction
+    - Split subgraphs at split/merge nodes into lane segments
+    - Each segment = (junction/in) → ... → (junction/out)
+    - Simplify with Douglas-Peucker
+    - Preserve node attributes
+    - Use infer_majority_direction for consistent orientation
     """
-    G_undirected = G_dir.to_undirected()
-    components = list(nx.connected_components(G_undirected))
-
     refined_graph = nx.DiGraph()
+    junction_nodes = {n for n, d in G_dir.nodes(data=True) if d.get("type") in {"split", "merge"}}
 
-    for comp_nodes in components:
-        subgraph_u = G_undirected.subgraph(comp_nodes)
-        path = extract_ordered_path(subgraph_u)
-        if len(path) < 2:
-            continue
+    def process_segment(segment):
+        """Simplify and insert segment into refined graph."""
+        if len(segment) < 2:
+            return
+        direction = infer_majority_direction(G_dir, segment)
+        simplified = douglas_peucker_int(segment, epsilon=simplify_epsilon)
 
-        direction = infer_majority_direction(G_dir, path)
-        simplified = douglas_peucker_int(path, epsilon=simplify_epsilon)
-
-
+        for node in simplified:
+            if node not in refined_graph:
+                refined_graph.add_node(node, **G_dir.nodes[node])
         for u, v in zip(simplified[:-1], simplified[1:]):
-            if direction == 'forward':
+            if direction == "forward":
                 refined_graph.add_edge(u, v)
             else:
                 refined_graph.add_edge(v, u)
 
+    # Walk forward from every junction and "in" node
+    start_nodes = [n for n in G_dir.nodes if G_dir.out_degree(n) > 0 and 
+                   (n in junction_nodes or G_dir.nodes[n].get("type") == "in")]
+
+    for start in start_nodes:
+        for succ in G_dir.successors(start):
+            path = [start, succ]
+            current = succ
+            while current not in junction_nodes and G_dir.out_degree(current) == 1:
+                nxt = next(G_dir.successors(current))
+                path.append(nxt)
+                current = nxt
+            process_segment(path)
+
+    # Walk backward from every junction and "out" node (optional if symmetry needed)
+    # Could be skipped if only forward segments are required
+
     return refined_graph
+
 
 
 def extract_ordered_path(G: nx.Graph) -> List[Tuple[int, int]]:
@@ -319,7 +363,7 @@ def infer_majority_direction(
     reverse_length = 0.0
 
     for u, v in zip(path[:-1], path[1:]):
-        d = _calculate_euclidean_distance(u, v)
+        d = _calculate_euclidean_distance(G_dir.nodes[u], G_dir.nodes[v])
         if G_dir.has_edge(u, v):
             forward_length += d
         elif G_dir.has_edge(v, u):
