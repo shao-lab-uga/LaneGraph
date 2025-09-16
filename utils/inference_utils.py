@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image 
 # Import new post-processing utilities
 sys.path.append('..')
-from utils.image_postprocessing import denormalize_image_for_display, encode_direction_vectors_to_image, apply_softmax_to_logits
+from utils.image_postprocessing_utils import denormalize_image_for_display, encode_direction_vectors_to_image, apply_softmax_to_logits
 
 def load_model(model, checkpoint_path):
     """

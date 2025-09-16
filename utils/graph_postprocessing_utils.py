@@ -404,3 +404,37 @@ def point_to_line_distance(p, a, b):
     return np.linalg.norm(p - proj)
 
 
+def annotate_node_types(G: nx.DiGraph) -> nx.DiGraph:
+    """
+    Annotate node types in a directed lane graph:
+    - "in":  entry boundary (in_degree=0, out_degree=1)
+    - "out": exit boundary (in_degree=1, out_degree=0)
+    - "split": junction with more outgoing than incoming
+    - "merge": junction with more incoming than outgoing
+    - "lane": intermediate lane node
+    """
+    for node in G.nodes():
+        in_degree = G.in_degree(node)
+        out_degree = G.out_degree(node)
+        total_degree = in_degree + out_degree
+
+        if total_degree >= 3:
+            if in_degree < out_degree:
+                G.nodes[node]["type"] = "split"
+            elif in_degree > out_degree:
+                G.nodes[node]["type"] = "merge"
+            else:
+                G.nodes[node]["type"] = "lane"
+        elif total_degree == 1:  # boundary
+            if in_degree == 0 and out_degree == 1:
+                G.nodes[node]["type"] = "in"
+            elif out_degree == 0 and in_degree == 1:
+                G.nodes[node]["type"] = "out"
+            else:
+                G.nodes[node]["type"] = "lane"
+        elif total_degree == 2 and in_degree == 1 and out_degree == 1:
+            G.nodes[node]["type"] = "lane"
+        else:
+            G.nodes[node]["type"] = "lane"
+
+    return G

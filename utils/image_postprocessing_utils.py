@@ -1,17 +1,6 @@
-"""
-Image and tensor post-processing utilities for lane detection and direction inference.
-
-This module provides functions for post-processing model outputs, including:
-- Tensor normalization and clipping operations
-- Direction image encoding/decoding  
-- Segmentation post-processing
-- Output visualization utilities
-"""
-
-import numpy as np
-from typing import Tuple, Optional
 import cv2
-
+import numpy as np
+from typing import Tuple
 
 def normalize_tensor_to_image_range(
     tensor: np.ndarray, 
@@ -200,94 +189,6 @@ def post_process_model_output(
     return processed_lanes, processed_directions
 
 
-def apply_region_mask(
-    lane_output: np.ndarray,
-    direction_output: np.ndarray, 
-    region_mask: np.ndarray,
-    mask_threshold: float = 0.5
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Apply region mask to filter outputs to valid regions only.
-    
-    Args:
-        lane_output: Lane segmentation output
-        direction_output: Direction vector output
-        region_mask: Binary mask indicating valid regions
-        mask_threshold: Threshold for region mask binarization
-        
-    Returns:
-        Tuple of (masked_lanes, masked_directions)
-    """
-
-    if region_mask.max() > 1.0:
-        binary_mask = (region_mask / 255.0) > mask_threshold
-    else:
-        binary_mask = region_mask > mask_threshold
-    
-
-    masked_lanes = lane_output * binary_mask
-    
-
-    if len(direction_output.shape) == 3 and direction_output.shape[2] == 2:
-        masked_directions = direction_output * binary_mask[:, :, np.newaxis]
-    else:
-        masked_directions = direction_output * binary_mask
-    
-    return masked_lanes, masked_directions
-
-
-def create_visualization_output(
-    input_image: np.ndarray,
-    lane_output: np.ndarray,
-    direction_output: np.ndarray,
-    save_path: Optional[str] = None
-) -> np.ndarray:
-    """
-    Create visualization combining input image with lane and direction outputs.
-    
-    Args:
-        input_image: Original input image
-        lane_output: Processed lane segmentation
-        direction_output: Processed direction vectors
-        save_path: Optional path to save visualization
-        
-    Returns:
-        Combined visualization image
-    """
-
-    if input_image.max() <= 1.0:
-        vis_input = (input_image * 255).astype(np.uint8)
-    else:
-        vis_input = input_image.astype(np.uint8)
-    
-    # Handle single channel input
-    if len(vis_input.shape) == 2:
-        vis_input = cv2.cvtColor(vis_input, cv2.COLOR_GRAY2RGB)
-    elif vis_input.shape[2] == 1:
-        vis_input = cv2.cvtColor(vis_input.squeeze(), cv2.COLOR_GRAY2RGB)
-    
-    # Create lane overlay
-    lane_overlay = np.zeros_like(vis_input)
-    if lane_output.max() <= 1.0:
-        lane_mask = (lane_output * 255).astype(np.uint8)
-    else:
-        lane_mask = lane_output.astype(np.uint8)
-    
-    lane_overlay[:, :, 1] = lane_mask  # Green channel for lanes
-    
-    # Create direction overlay
-    direction_overlay = encode_direction_vectors_to_image(direction_output)
-    
-    # Combine visualizations
-    combined = cv2.addWeighted(vis_input, 0.6, lane_overlay, 0.4, 0)
-    combined = cv2.addWeighted(combined, 0.7, direction_overlay, 0.3, 0)
-    
-    if save_path:
-        cv2.imwrite(save_path, combined)
-    
-    return combined
-
-
 def normalize_image_for_model_input(
     image: np.ndarray,
     mean: float = 0.5,
@@ -319,39 +220,6 @@ def normalize_image_for_model_input(
     return normalized
 
 
-def denormalize_model_output(
-    output: np.ndarray,
-    mean: float = 0.5, 
-    std: float = 0.5,
-    output_range: Tuple[int, int] = (0, 255)
-) -> np.ndarray:
-    """
-    Denormalize model output back to image range.
-    
-    Args:
-        output: Model output tensor
-        mean: Mean value used in normalization
-        std: Standard deviation used in normalization  
-        output_range: Target output value range
-        
-    Returns:
-        Denormalized image
-    """
-    # Reverse mean/std normalization
-    denormalized = output * std + mean
-    
-    # Scale to output range
-    output_min, output_max = output_range
-    denormalized = denormalized * (output_max - output_min) + output_min
-    
-    # Clip and convert to proper type
-    denormalized = np.clip(denormalized, output_min, output_max)
-    
-    if output_max <= 255:
-        return denormalized.astype(np.uint8)
-    else:
-        return denormalized.astype(np.float32)
-
 
 def denormalize_image_for_display(normalized_image):
     """
@@ -380,69 +248,3 @@ def apply_softmax_to_logits(logits):
     exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))  # Numerical stability
     return exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
 
-
-def post_process_model_output(
-    outputs, 
-    threshold=64, 
-    morphology_size=(6, 6), 
-    apply_thinning=True, 
-    save_debug_image=None
-):
-    """
-    Post-process model output from lane and direction extraction.
-    
-    Args:
-        outputs (np.ndarray): Model outputs of shape [B, 4, H, W] where first 2 channels are lane, last 2 are direction
-        threshold (int): Threshold for lane binarization
-        morphology_size (tuple): Size for morphological operations
-        apply_thinning (bool): Whether to apply morphological thinning
-        save_debug_image (str, optional): Path to save debug image
-        
-    Returns:
-        tuple: (lane_predicted_image, direction_predicted_image)
-    """
-    import scipy.ndimage
-    from skimage import morphology
-    from PIL import Image
-    import einops
-    
-
-    lane_predicted = outputs[:, 0:2, :, :]  # [B, 2, H, W]
-    direction_predicted = outputs[:, 2:4, :, :] # [B, 2, H, W]
-
-
-    lane_predicted = einops.rearrange(lane_predicted, 'b c h w -> b h w c')
-    direction_predicted = einops.rearrange(direction_predicted, 'b c h w -> b h w c')
-
-
-    lane_predicted_image = np.zeros((outputs.shape[2], outputs.shape[3]))
-    lane_predicted_image[:, :] = np.clip(lane_predicted[0,:,:,0], 0, 1) * 255
-    
-
-    direction_predicted_image = np.zeros((outputs.shape[2], outputs.shape[3], 2))
-    direction_predicted_image[:,:,0] = np.clip(direction_predicted[0,:,:,0],-1,1) * 127 + 127
-    direction_predicted_image[:,:,1] = np.clip(direction_predicted[0,:,:,1],-1,1) * 127 + 127
-    
-
-    if save_debug_image:
-        Image.fromarray(lane_predicted_image.astype(np.uint8)).save(save_debug_image)
-
-
-    lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=morphology_size)
-    lane_predicted_image = lane_predicted_image >= threshold
-    
-    if apply_thinning:
-        lane_predicted_image = morphology.thin(lane_predicted_image)
-
-    return lane_predicted_image, direction_predicted_image
-
-
-
-def clip_and_normalize_directions(directions, output_range=(0, 255)):
-    """Legacy function for direction normalization."""
-    return normalize_tensor_to_image_range(directions, (-1.0, 1.0), output_range)
-
-
-def process_segmentation_output(segmentation, threshold=0.5):
-    """Legacy function for segmentation processing."""
-    return post_process_lane_segmentation(segmentation, threshold)

@@ -29,7 +29,7 @@ def calculate_zoom_for_coverage_google(coverage_meters, image_size=640):
     required_meters_per_pixel = coverage_meters / image_size
     base_resolution = 156543.03392
     zoom = math.log2(base_resolution / required_meters_per_pixel)
-    return int(max(0, min(20, zoom)))
+    return max(0, min(20, zoom))
 
 def bbox_from_center_gsd(lat, lon, gsd_m_per_px=0.125, size_px=4096):
     """Make a square bbox (minLon, minLat, maxLon, maxLat) centered at (lat,lon)

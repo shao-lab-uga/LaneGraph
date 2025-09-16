@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore")
 from laneAndDirectionExtraction.model import UnetResnet34
 from utils.config_utils import load_config
 from utils.inference_utils import visualize_lane_and_direction_inference, load_model
-from utils.image_postprocessing import normalize_image_for_model_input
+from utils.image_postprocessing_utils import normalize_image_for_model_input
 sys.path.append('..')
 
 

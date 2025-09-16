@@ -1,9 +1,9 @@
 import os
 import cv2
-import networkx as nx
 import numpy as np
+import networkx as nx
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, DefaultDict
+from typing import List, Optional, Tuple
 
 WINDOW_SIZE = 640
 
@@ -200,67 +200,72 @@ def direct_graph_from_direction_map(G: nx.Graph, direction_map: np.ndarray) -> n
     return DirG
 
 
-def draw_inputs(
+def draw_directed_graph(
     G: nx.DiGraph, save_path: Optional[Path] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Generates inputs for turning lane extraction processes. Creates lane mask and normal map using directed graph.
+    """Draw a directed graph with colored nodes and edges, generating lane mask and normal map.
 
     Args:
-        G (nx.DiGraph): Directed graph where node names are (row, col)
-        save_path (Optional[Path], optional): Directory path to save outputs to. Defaults to None.
+        G (nx.DiGraph): Directed graph where node names are (row, col) coordinates.
+        save_path (Optional[Path], optional): Directory path to save output images. Defaults to None.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: lane mask and normal map
+        Tuple[np.ndarray, np.ndarray]: Tuple containing the lane mask image and normal map image.
     """
+    # Initialize output images: lane mask (white edges on black) and normal map (directional vectors)
     out_lane = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 3), dtype=np.uint8)
     out_normal = np.full((WINDOW_SIZE, WINDOW_SIZE, 3), 127, dtype=np.uint8)
 
-    # draw edges
+    # Draw edges as white lines on lane mask and directional colors on normal map
     for u, v in G.edges():
-        ux, uy = u[1], u[0]
+        ux, uy = u[1], u[0]  # Convert (row, col) to (x, y)
         vx, vy = v[1], v[0]
 
+        # Calculate normalized direction vector for normal map coloring
         dx = vx - ux
         dy = vy - uy
-        length = np.sqrt(float(dx**2 + dy**2)) + 1e-6
+        length = np.sqrt(float(dx**2 + dy**2)) + 1e-6  # Avoid division by zero
         dx /= length
         dy /= length
+        # Map direction to color: [-1,1] -> [0,254] + 127 offset
         color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
 
+        # Draw edge lines
         cv2.line(out_lane, (ux, uy), (vx, vy), (255, 255, 255), 2)
         cv2.line(out_normal, (ux, uy), (vx, vy), color, 2)
 
-    # draw nodes and annotate with type + degree
+    # Draw nodes with color coding based on type and annotate with degree information
     for node in G.nodes():
         node_type = G.nodes[node].get("type", "unknown")
-        x, y = node[1], node[0]
+        x, y = node[1], node[0]  # Convert (row, col) to (x, y)
         in_deg, out_deg = G.in_degree(node), G.out_degree(node)
 
-        # choose color by type
+        # Color coding for different node types
         if node_type == "in":
-            color = (0, 255, 0)     # Green
+            color = (0, 255, 0)     # Green for entry points
         elif node_type == "out":
-            color = (0, 0, 255)     # Red
+            color = (0, 0, 255)     # Red for exit points
         elif node_type == "lane":
-            color = (0, 255, 255)   # Cyan
+            color = (0, 255, 255)   # Cyan for regular lane nodes
         elif node_type == "split":
-            color = (255, 0, 255)   # Magenta
+            color = (255, 0, 255)   # Magenta for split junctions
         elif node_type == "merge":
-            color = (255, 255, 0)   # Yellow
+            color = (255, 255, 0)   # Yellow for merge junctions
         else:
-            color = (200, 200, 200) # Gray fallback
+            color = (200, 200, 200) # Gray for unknown types
 
-        # draw node
+        # Draw node as filled circle
         cv2.circle(out_lane, (x, y), 4, color, -1)
         cv2.circle(out_normal, (x, y), 4, color, -1)
 
-        # annotate in/out degree
+        # Add text annotation showing in-degree, out-degree, and node type
         text = f"{in_deg},{out_deg},{node_type}"
         cv2.putText(
             out_lane, text, (x + 6, y - 6),
             cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1, cv2.LINE_AA
         )
 
+    # Save images to disk if path is provided
     if save_path:
         cv2.imwrite(os.path.join(save_path, "lane.png"), out_lane)
         cv2.imwrite(os.path.join(save_path, "normal.png"), out_normal)
@@ -268,112 +273,6 @@ def draw_inputs(
     return out_lane, out_normal
 
 
-def draw_output(
-    G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None, draw_nodes: bool = False
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Generates inputs for turning lane extraction processes. Creates lane mask and normal map using directed graph.
-
-    Args:
-        G (nx.DiGraph): Directed graph where node names are (row, col)
-        save_path (Optional[Path], optional): Directory path to save outputs to. Defaults to None.
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: _description_
-    """
-    out_lane = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 1))
-    out_normal = np.full((WINDOW_SIZE, WINDOW_SIZE, 2), 127, dtype=np.uint8)
-
-    for u, v in G.edges():
-        ux = u[1]
-        uy = u[0]
-        vx = v[1]
-        vy = v[0]
-
-    
-        dx = vx - ux
-        dy = vy - uy
-
-        length = np.sqrt(float((dx**2 + dy**2))) + 0.001
-        dx /= length
-        dy /= length
-        color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
-
-        cv2.line(out_lane, (ux, uy), (vx, vy), (255, 255, 255), 5)
-        cv2.line(out_normal, (ux, uy), (vx, vy), color, 5)
-        # draw the nodes
-
-    for node in G.nodes():
-        x, y = node[1], node[0]
-        node_type = G.nodes[node].get("type", "unknown")
-        if draw_nodes:
-            if node_type == "end":
-                cv2.circle(out_lane, (x, y), 5, (255, 0, 0), -1)
-                cv2.circle(out_normal, (x, y), 5, (255, 0, 0), -1)
-            elif node_type == "in":
-                cv2.circle(out_lane, (x, y), 5, (0, 255, 0), -1)
-                cv2.circle(out_normal, (x, y), 5, (0, 255, 0), -1)
-            elif node_type == "out":
-                cv2.circle(out_lane, (x, y), 5, (0, 0, 255), -1)
-                cv2.circle(out_normal, (x, y), 5, (0, 0, 255), -1)
-            elif node_type == "lane":
-                cv2.circle(out_lane, (x, y), 5, (0, 255, 255), -1)
-                cv2.circle(out_normal, (x, y), 5, (0, 255, 255), -1)
-            elif node_type == "link":
-                cv2.circle(out_lane, (x, y), 5, (255, 255, 0), -1)
-                cv2.circle(out_normal, (x, y), 5, (255, 255, 0), -1)
-
-    if save_path and image_name:
-        cv2.imwrite(os.path.join(save_path, f"{image_name}.png"), out_lane)
-        save_normal_arr = np.full(
-            (WINDOW_SIZE, WINDOW_SIZE, 3), 127, dtype=out_normal.dtype
-        )
-        save_normal_arr[:, :, 0:2] = out_normal
-        cv2.imwrite(os.path.join(save_path, f"{image_name}_normal.png"), save_normal_arr)
-
-    return out_lane, out_normal
-
-def annotate_node_types(G: nx.DiGraph) -> nx.DiGraph:
-    """
-    Annotate node types in a directed lane graph:
-    - "in":  entry boundary (in_degree=0, out_degree=1)
-    - "out": exit boundary (in_degree=1, out_degree=0)
-    - "split": junction with more outgoing than incoming
-    - "merge": junction with more incoming than outgoing
-    - "lane": intermediate lane node
-    """
-    for node in G.nodes():
-        in_degree = G.in_degree(node)
-        out_degree = G.out_degree(node)
-        total_degree = in_degree + out_degree
-
-        if total_degree >= 3:
-            if in_degree < out_degree:
-                G.nodes[node]["type"] = "split"
-            elif in_degree > out_degree:
-                G.nodes[node]["type"] = "merge"
-            else:
-                G.nodes[node]["type"] = "lane"
-        elif total_degree == 1:  # boundary
-            if in_degree == 0 and out_degree == 1:
-                G.nodes[node]["type"] = "in"
-            elif out_degree == 0 and in_degree == 1:
-                G.nodes[node]["type"] = "out"
-            else:
-                G.nodes[node]["type"] = "lane"
-        elif total_degree == 2 and in_degree == 1 and out_degree == 1:
-            G.nodes[node]["type"] = "lane"
-        else:
-            G.nodes[node]["type"] = "lane"
-
-    return G
 
 
-def get_node_types(G: nx.DiGraph) -> Dict[str, List[Tuple[int, int]]]:
-    node_types = DefaultDict(list)
-    for node, data in G.nodes(data=True):
-        node_type = data.get("type")
-        if node_type is None:
-            raise ValueError(f"Node {node} does not have an assigned type.")
-        node_types[node_type].append(node)
-    return node_types
 

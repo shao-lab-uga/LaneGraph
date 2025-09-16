@@ -20,12 +20,12 @@ from shapely.geometry import LineString
 import utils.segmentation2graph as segmentation2graph
 from utils.config_utils import load_config
 from utils.inference_utils import load_model
-
 from turingLaneExtraction.model import LaneExtractionModel
 from reachableLaneValidation.model import ReachableLaneValidationModel
 from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
-from utils.postprocessing_utils import refine_lane_graph, connect_nearby_dead_ends, refine_lane_graph_with_curves
-from utils.image_postprocessing import encode_direction_vectors_to_image
+from utils.image_postprocessing_utils import encode_direction_vectors_to_image
+from utils.graph_postprocessing_utils import refine_lane_graph, connect_nearby_dead_ends, refine_lane_graph_with_curves
+
 
 
 class LaneGraphExtraction():
@@ -510,7 +510,7 @@ class LaneGraphExtraction():
         return ax
 
 
-    def extract_lane_graph(self, input_satellite_image_path, gpu_id=0, output_path='./'):
+    def extract_lane_graph(self, input_satellite_image, gpu_id=0, output_path='./'):
         """
         Extracts lane graph from the satellite image.
         
@@ -521,10 +521,12 @@ class LaneGraphExtraction():
             nx.DiGraph: Extracted lane graph.
         """
         print("Extracting lane graph from the satellite image...")
-        if not os.path.exists(output_path):
-            os.makedirs(output_path)
-        image_name = os.path.basename(input_satellite_image_path)
-        input_satellite_image = imageio.imread(input_satellite_image_path)
+
+
+
+        
+        image_name = os.path.basename(input_satellite_image)
+        input_satellite_image: np.ndarray = imageio.imread(input_satellite_image)
         
         # # Step 1: Lane and Direction Extraction
         lane_graph = self._extract_lane_and_direction(input_satellite_image)
@@ -534,7 +536,7 @@ class LaneGraphExtraction():
         lane_graph = segmentation2graph.annotate_node_types(lane_graph)
         lane_graph = refine_lane_graph_with_curves(lane_graph)
         
-        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph, output_path)
+        lane_prediced, direction_predicted = segmentation2graph.draw_directed_graph(lane_graph, output_path)
         print(f"Number of nodes in lane graph: {len(lane_graph.nodes)}")
         # # # Step 2: Reachable Lane Extraction
         # reachable_node_pairs = self.extract_valid_turning_pairs(lane_graph, 
@@ -551,7 +553,7 @@ class LaneGraphExtraction():
         #                                          radius=5.0)
         # for node in lane_graph.nodes:
         #      print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
-        # segmentation2graph.draw_output(lane_graph, output_path, image_name=image_name)
+        segmentation2graph.draw_output(lane_graph, output_path, image_name=image_name)
 
         lanes_and_links_gdf = self.extract_lanes_and_links_with_fids(lane_graph,
             origin=(0, 0), # Assuming origin is (0, 0) for simplicity.
@@ -561,6 +563,13 @@ class LaneGraphExtraction():
 
         ax = self.visualize_lanes_and_links(lanes_and_links_gdf)
         plt.savefig(os.path.join(output_path, f"lane_links_{image_name}.png"))
+
+
+        if output_path is not None:
+            if not os.path.exists(output_path):
+                os.makedirs(output_path)
+
+
         return 
 
 
