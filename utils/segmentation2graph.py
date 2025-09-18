@@ -4,6 +4,7 @@ import numpy as np
 import networkx as nx
 from pathlib import Path
 from typing import List, Optional, Tuple
+import matplotlib.pyplot as plt
 
 WINDOW_SIZE = 640
 
@@ -199,9 +200,40 @@ def direct_graph_from_direction_map(G: nx.Graph, direction_map: np.ndarray) -> n
 
     return DirG
 
+def visualize_lanes_and_links(gdf, ax=None, lane_color='blue', link_color='red', show_labels=True, save_path=None, image_name=None):
+    import matplotlib.lines as mlines
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 10))
+    # Split by type
+    gdf_lanes = gdf[gdf['type'] == 'lane']
+    gdf_links = gdf[gdf['type'] == 'link']
+    # Plot lanes
+    if not gdf_lanes.empty:
+        gdf_lanes.plot(ax=ax, color=lane_color, linewidth=2, alpha=0.8, label="lane")
+        for _, row in gdf_lanes.iterrows():
+            coords = list(row.geometry.coords)
+            ax.plot(*coords[0], marker='o', color=lane_color, markersize=4)  # start
+            ax.plot(*coords[-1], marker='x', color=lane_color, markersize=4)  # end
+    # Plot links
+    if not gdf_links.empty:
+        gdf_links.plot(ax=ax, color=link_color, linewidth=2, alpha=0.8, label="link")
+        for _, row in gdf_links.iterrows():
+            coords = list(row.geometry.coords)
+            ax.plot(*coords[0], marker='o', color=link_color, markersize=4)  # start
+            ax.plot(*coords[-1], marker='x', color=link_color, markersize=4)  # end
+    ax.set_aspect('equal')
+    ax.grid(True)
+    ax.set_title("Visualized Lanes and Links")
+    if show_labels:
+        lane_line = mlines.Line2D([], [], color=lane_color, label='lane', linewidth=2)
+        link_line = mlines.Line2D([], [], color=link_color, label='link', linewidth=2)
+        ax.legend(handles=[lane_line, link_line])
+    if save_path:
+        plt.savefig(os.path.join(save_path, f"lane_and_links_{image_name}.png"))
+    return ax
 
 def draw_directed_graph(
-    G: nx.DiGraph, save_path: Optional[Path] = None
+    G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Draw a directed graph with colored nodes and edges, generating lane mask and normal map.
 
@@ -266,9 +298,9 @@ def draw_directed_graph(
         )
 
     # Save images to disk if path is provided
-    if save_path:
-        cv2.imwrite(os.path.join(save_path, "lane.png"), out_lane)
-        cv2.imwrite(os.path.join(save_path, "normal.png"), out_normal)
+    if save_path and image_name:
+        cv2.imwrite(os.path.join(save_path, f"lane_{image_name}.png"), out_lane)
+        cv2.imwrite(os.path.join(save_path, f"normal_{image_name}.png"), out_normal)
 
     return out_lane, out_normal
 

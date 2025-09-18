@@ -7,7 +7,6 @@ Created on Mon May  6 14:05:30 2019
 """
 
 import numpy as np
-# from osgeo import gdal, ogr, osr
 import scipy.spatial
 import geopandas as gpd
 import rasterio as rio
@@ -217,24 +216,6 @@ def _haversine(lon1, lat1, lon2, lat2):
     m = 1000. * km
     return m
 
-
-###############################################################################
-def get_gsd(im_test_file):
-    '''return gsd in meters'''
-    srcImage = gdal.Open(im_test_file)
-    geoTrans = srcImage.GetGeoTransform()
-    ulX = geoTrans[0]
-    ulY = geoTrans[3]
-    # xDist = geoTrans[1]
-    yDist = geoTrans[5]
-    # rtnX = geoTrans[2]
-    # rtnY = geoTrans[4]
-
-    # get haversine distance
-    # dx = _haversine(ulX, ulY, ulX+xDist, ulY) #haversine(lon1, lat1, lon2, lat2)
-    dy = _haversine(ulX, ulY, ulX, ulY + yDist)  # haversine(lon1, lat1, lon2, lat2)
-
-    return dy  # dx
 
 
 ###############################################################################
