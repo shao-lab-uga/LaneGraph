@@ -1,17 +1,6 @@
-"""
-Post-processing utilities for lane graph refinement and optimization.
-
-This module provides functions for cleaning and refining lane graphs
-extracted from segmentation outputs, including:
-- Removing isolated components and short spurs
-- Connecting nearby dead ends  
-- Graph downsampling
-- Graph connectivity operations
-"""
-
 import numpy as np
 import networkx as nx
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Tuple, Set, DefaultDict, Optional
 
 
 def refine_lane_graph(
@@ -276,9 +265,6 @@ def connect_nearby_dead_ends(
 
     return graph
 
-
-
-
 def refine_lane_graph_with_curves(
     G_dir: nx.DiGraph,
     simplify_epsilon: float = 2.0,
@@ -311,8 +297,7 @@ def refine_lane_graph_with_curves(
                 refined_graph.add_edge(v, u)
 
     # Walk forward from every junction and "in" node
-    start_nodes = [n for n in G_dir.nodes if G_dir.out_degree(n) > 0 and 
-                   (n in junction_nodes or G_dir.nodes[n].get("type") == "in")]
+    start_nodes = [n for n in G_dir.nodes if (n in junction_nodes or G_dir.nodes[n].get("type") == "in")]
 
     for start in start_nodes:
         for succ in G_dir.successors(start):
@@ -323,9 +308,6 @@ def refine_lane_graph_with_curves(
                 path.append(nxt)
                 current = nxt
             process_segment(path)
-
-    # Walk backward from every junction and "out" node (optional if symmetry needed)
-    # Could be skipped if only forward segments are required
 
     return refined_graph
 
@@ -403,7 +385,6 @@ def point_to_line_distance(p, a, b):
     proj = a + t * ab
     return np.linalg.norm(p - proj)
 
-
 def annotate_node_types(G: nx.DiGraph) -> nx.DiGraph:
     """
     Annotate node types in a directed lane graph:
@@ -425,7 +406,7 @@ def annotate_node_types(G: nx.DiGraph) -> nx.DiGraph:
                 G.nodes[node]["type"] = "merge"
             else:
                 G.nodes[node]["type"] = "lane"
-        elif total_degree == 1:  # boundary
+        elif total_degree == 1:
             if in_degree == 0 and out_degree == 1:
                 G.nodes[node]["type"] = "in"
             elif out_degree == 0 and in_degree == 1:
@@ -438,3 +419,194 @@ def annotate_node_types(G: nx.DiGraph) -> nx.DiGraph:
             G.nodes[node]["type"] = "lane"
 
     return G
+
+def get_node_types(G: nx.DiGraph) -> Dict[str, List[Tuple[int, int]]]:
+    node_types = DefaultDict(list)
+    for node, data in G.nodes(data=True):
+        node_type = data.get("type")
+        if node_type is None:
+            raise ValueError(f"Node {node} does not have an assigned type.")
+        node_types[node_type].append(node)
+    return node_types
+
+def get_corresponding_lane_segment(
+    G: nx.DiGraph,
+    start_node_id,
+    segment_max_length: int = 5
+) -> List[Tuple[int, int]]:
+    """
+    Extract the lane segment starting from a given node
+    """
+    if start_node_id not in G:
+        raise ValueError(f"Start node {start_node_id} not in graph.")
+
+    segment = [start_node_id]
+    current_node = start_node_id
+    current_node_type = G.nodes[current_node].get("type")
+    # if the node is a in node, traverse forward
+    if current_node_type == "in":
+        while True:
+            successors = list(G.successors(current_node))
+            if len(successors) != 1:
+                break
+            next_node = successors[0]
+            segment.append(next_node)
+            if G.nodes[next_node].get("type") in {"split", "merge", "out"}:
+                break
+            if len(segment) >= segment_max_length:
+                break
+            current_node = next_node
+    elif current_node_type == "out":
+        # if the node is a out node, traverse backward
+        while True:
+            predecessors = list(G.predecessors(current_node))
+            if len(predecessors) != 1:
+                break
+            next_node = predecessors[0]
+            segment.append(next_node)
+            if G.nodes[next_node].get("type") in {"split", "merge", "in"}:
+                break
+            if len(segment) >= segment_max_length:
+                break
+            
+            current_node = next_node
+    return segment
+
+def get_segment_average_angle(
+    G: nx.DiGraph,
+    segment: List[Tuple[int, int]],
+    log: bool = False
+) -> float:
+    """
+    Calculate the average angle of a lane segment
+    """
+    if len(segment) < 2:
+        return 0.0
+    start_node_id = segment[0]
+    start_node_type = G.nodes[start_node_id].get("type")
+    
+    angles = []
+    pos_u = np.array(G.nodes[start_node_id].get("pos", (0, 0)))
+    for node_v in segment[1:]:
+        pos_v = np.array(G.nodes[node_v].get("pos", (0, 0)))
+        type_u = G.nodes[node_v].get("type")
+        if log:
+            print(f"Node {node_v} (type: {type_u}) at {pos_v} -> Node {start_node_id} (type: {start_node_type}) at {pos_u}")
+        delta = (pos_v - pos_u)
+        angle = np.arctan2(delta[1], delta[0])  # in radians
+        angles.append(angle)
+
+    angles_sum = np.sum(angles)
+    avg_angle = angles_sum / len(angles)
+    if start_node_type == "in":
+        avg_angle += np.pi  # reverse direction
+    return avg_angle
+
+def extend_line_from_endpoint(
+    endpoint: Tuple[float, float],
+    angle: float,
+    length: float = 100.0
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """
+    Create a line segment extending from an endpoint along a given angle.
+
+    Parameters
+    ----------
+    endpoint : (x, y)
+        The starting point of the line.
+    angle : float
+        Direction in radians.
+    length : float
+        Length to extend (acts as "infinite" line approximation).
+
+    Returns
+    -------
+    (p1, p2) : Tuple[Tuple[float, float], Tuple[float, float]]
+        Start and end coordinates of the extended line.
+    """
+    x, y = endpoint
+    dx = np.cos(angle) * length
+    dy = np.sin(angle) * length
+    return (x, y), (x + dx, y + dy)
+
+def segment_intersection(
+    p1: Tuple[float, float], p2: Tuple[float, float],
+    p3: Tuple[float, float], p4: Tuple[float, float]
+) -> Optional[Tuple[float, float]]:
+    """
+    Compute the intersection point of the two line segments (p1, p2) and (p3, p4).
+
+    Parameters
+    ----------
+    p1, p2 : Tuple[float, float]
+        Endpoints of the first segment.
+    p3, p4 : Tuple[float, float]
+        Endpoints of the second segment.
+
+    Returns
+    -------
+    Optional[Tuple[float, float]]
+        The intersection point (x, y) if the segments intersect,
+        otherwise None.
+    """
+    x1, y1 = p1
+    x2, y2 = p2
+    x3, y3 = p3
+    x4, y4 = p4
+
+    # Line equations: A1x + B1y = C1, A2x + B2y = C2
+    A1 = y2 - y1
+    B1 = x1 - x2
+    C1 = A1 * x1 + B1 * y1
+
+    A2 = y4 - y3
+    B2 = x3 - x4
+    C2 = A2 * x3 + B2 * y3
+
+    determinant = A1 * B2 - A2 * B1
+
+    if abs(determinant) < 1e-9:
+        # Lines are parallel (or coincident)
+        return None
+
+    x = (B2 * C1 - B1 * C2) / determinant
+    y = (A1 * C2 - A2 * C1) / determinant
+
+    # Check if (x,y) is within both segments' bounding boxes
+    def within(px, py, a, b):
+        return (
+            min(a[0], b[0]) - 1e-9 <= px <= max(a[0], b[0]) + 1e-9 and
+            min(a[1], b[1]) - 1e-9 <= py <= max(a[1], b[1]) + 1e-9
+        )
+
+    if within(x, y, p1, p2) and within(x, y, p3, p4):
+        return (x, y)
+    return None
+
+
+
+import matplotlib.pyplot as plt
+def intersection_of_extended_segments(
+    G: nx.DiGraph,
+    in_segment: list,
+    out_segment: list,
+    length: float = 100.0
+) -> Optional[Tuple[float, float]]:
+    """
+    Compute the intersection of an 'in' segment extended backward
+    and an 'out' segment extended forward.
+    """
+    # ---- IN segment ----
+    in_angle = get_segment_average_angle(G, in_segment)
+    in_endpoint = np.array(G.nodes[in_segment[0]].get("pos", (0, 0)))  # start node of "in"
+    in_line = extend_line_from_endpoint(in_endpoint, in_angle + np.pi, length)
+    # plt.plot([in_line[0][0], in_line[1][0]], [in_line[0][1], in_line[1][1]], c='red')
+    # plt.scatter(in_endpoint[0], in_endpoint[1], c='red')
+    # ---- OUT segment ----
+    out_angle = get_segment_average_angle(G, out_segment)
+    out_endpoint = np.array(G.nodes[out_segment[0]].get("pos", (0, 0)))  # end node of "out"
+    out_line = extend_line_from_endpoint(out_endpoint, out_angle, length)
+    # plt.plot([out_line[0][0], out_line[1][0]], [out_line[0][1], out_line[1][1]], c='blue')
+    # plt.scatter(out_endpoint[0], out_endpoint[1], c='blue')
+    # ---- Compute intersection ----
+    return segment_intersection(in_line[0], in_line[1], out_line[0], out_line[1])

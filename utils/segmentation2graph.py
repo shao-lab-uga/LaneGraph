@@ -250,8 +250,8 @@ def draw_directed_graph(
 
     # Draw edges as white lines on lane mask and directional colors on normal map
     for u, v in G.edges():
-        ux, uy = u[1], u[0]  # Convert (row, col) to (x, y)
-        vx, vy = v[1], v[0]
+        ux, uy = G.nodes[u].get("pos", (0, 0))  # Convert (row, col) to (x, y)
+        vx, vy = G.nodes[v].get("pos", (0, 0))
 
         # Calculate normalized direction vector for normal map coloring
         dx = vx - ux
@@ -269,7 +269,7 @@ def draw_directed_graph(
     # Draw nodes with color coding based on type and annotate with degree information
     for node in G.nodes():
         node_type = G.nodes[node].get("type", "unknown")
-        x, y = node[1], node[0]  # Convert (row, col) to (x, y)
+        x, y = G.nodes[node].get("pos", (0, 0))  # Convert (row, col) to (x, y)
         in_deg, out_deg = G.in_degree(node), G.out_degree(node)
 
         # Color coding for different node types

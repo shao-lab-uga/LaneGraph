@@ -4,6 +4,7 @@ import torch
 import einops
 import argparse
 import scipy.ndimage
+from PIL import Image 
 import numpy as np
 import networkx as nx
 import geopandas as gpd
@@ -21,9 +22,16 @@ from utils.inference_utils import load_model
 from turingLaneExtraction.model import LaneExtractionModel
 from reachableLaneValidation.model import ReachableLaneValidationModel
 from laneAndDirectionExtraction.model import LaneAndDirectionExtractionModel
+from utils.graph_postprocessing_utils import (refine_lane_graph,
+                                              connect_nearby_dead_ends,
+                                              refine_lane_graph_with_curves,
+                                              annotate_node_types,
+                                              get_node_types,
+                                              get_corresponding_lane_segment,
+                                              get_segment_average_angle,
+                                              intersection_of_extended_segments
+                                              )
 from utils.image_postprocessing_utils import encode_direction_vectors_to_image
-from utils.graph_postprocessing_utils import refine_lane_graph, connect_nearby_dead_ends, refine_lane_graph_with_curves, annotate_node_types
-
 
 
 class LaneGraphExtraction():
@@ -126,8 +134,8 @@ class LaneGraphExtraction():
         lane_predicted_image[border_mask] = 0
         direction_predicted_image[border_mask] = 127
 
-        # Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
-        # Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save("direction_predicted.jpg")
+        Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
+        Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save("direction_predicted.jpg")
         lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
         threshold = 32
         lane_predicted_image = lane_predicted_image >= threshold
@@ -227,7 +235,7 @@ class LaneGraphExtraction():
 
         return input_features
 
-    def extract_valid_turning_pairs(self, lane_graph, input_satellite_image, direction_context, gpu_id=0):
+    def extract_valid_turning_pairs_model_based(self, lane_graph: nx.DiGraph, input_satellite_image, direction_context, gpu_id=0):
         """
         Extracts valid turning pairs from the lane graph.
         
@@ -241,7 +249,7 @@ class LaneGraphExtraction():
         # Step 2: Reachable Lane Extraction
 
         
-        node_types = segmentation2graph.get_node_types(lane_graph)
+        node_types = get_node_types(lane_graph)
 
         
         out_nodes = node_types.get("out", [])
@@ -251,10 +259,10 @@ class LaneGraphExtraction():
         reachable_node_pairs = []
         debug_image = input_satellite_image.copy()
         for in_node in in_nodes:
-            y1, x1 = in_node
+            x1, y1 = lane_graph.nodes[in_node]['pos']
             cv2.circle(debug_image, (x1, y1), 12, (255, 0, 0), -1)
         for out_node in out_nodes:
-            y2, x2 = out_node
+            x2, y2 = lane_graph.nodes[out_node]['pos']
             cv2.circle(debug_image, (x2, y2), 12, (0, 0, 255), -1)
         for idx, node_pair in enumerate(node_pairs):
             input_features_node_a, input_features_node_b, input_features_validation = self._make_reachable_lane_validaton_input(
@@ -267,8 +275,8 @@ class LaneGraphExtraction():
             predicted_label = (reachable_label_predicted[:, 0] > reachable_label_predicted[:, 1]).long()
             # 
             output_image = input_satellite_image.copy()
-            y1, x1 = node_pair[0]
-            y2, x2 = node_pair[1]
+            x1, y1 = lane_graph.nodes[node_pair[0]]['pos']
+            x2, y2 = lane_graph.nodes[node_pair[1]]['pos']
             color = (255, 0, 0) if predicted_label.item() == 1 else (0, 0, 255)
             cv2.circle(output_image, (x1, y1), 12, color, -1)
             cv2.circle(output_image, (x2, y2), 12, color, -1)
@@ -279,6 +287,123 @@ class LaneGraphExtraction():
         # Image.fromarray(debug_image.astype(np.uint8)).save("debug_reachable_lane_pairs.jpg")
         return reachable_node_pairs
 
+
+    def extract_connections_rule_based(self, lane_graph: nx.DiGraph, segment_max_length=5, distance_threshold=250, turning_threshold=-0.8, topology_threshold=0.8):
+        """
+        Extracts valid connections from the lane graph.
+
+        Args:
+            lane_graph (nx.DiGraph): Input lane graph.
+        
+        Returns:
+            List[Tuple[int, int]]: List of valid connections.
+        """
+        print("Extracting valid connections from the lane graph...")
+        # Step 2: Reachable Lane Extraction
+
+        
+        node_types = get_node_types(lane_graph)
+
+        
+        out_nodes = node_types.get("out", [])
+        in_nodes = node_types.get("in", [])
+        
+        node_pairs = list(product(out_nodes, in_nodes))
+        
+        connections = {}
+        plt.figure(figsize=(10,10))
+        idx = 0
+        for out_node_id, in_node_id in node_pairs:
+            # nodes near in_node based on distance
+            in_node_neighbors = [
+                n for n in lane_graph.nodes
+                if np.linalg.norm(np.array(lane_graph.nodes[n].get("pos", (0, 0))) - np.array(lane_graph.nodes[in_node_id].get("pos", (0, 0)))) < 100 and lane_graph.nodes[n].get("type") == "in"
+            ]
+            out_node_neighbors = [
+                n for n in lane_graph.nodes
+                if np.linalg.norm(np.array(lane_graph.nodes[n].get("pos", (0, 0))) - np.array(lane_graph.nodes[out_node_id].get("pos", (0, 0)))) < 100 and lane_graph.nodes[n].get("type") == "out"
+            ]
+            
+            # if there is a path from out_node_id to in_node_id, skip
+            skipped = False
+            for in_node_neighbor in in_node_neighbors:
+                for out_node_neighbor in out_node_neighbors:
+                    
+                    if nx.has_path(lane_graph.to_undirected(), out_node_id, in_node_neighbor) or nx.has_path(lane_graph.to_undirected(), out_node_neighbor, in_node_id):
+                        skipped = True
+                        break
+            if skipped:
+                continue
+            out_node_x, out_node_y = lane_graph.nodes[out_node_id].get("pos", (0, 0))
+            in_node_x, in_node_y = lane_graph.nodes[in_node_id].get("pos", (0, 0))
+            plt.scatter(out_node_x, out_node_y, c='r', label='out' if idx == 0 else "")
+            plt.scatter(in_node_x, in_node_y, c='b', label='in' if idx == 0 else "")
+            if idx == 0:
+                idx += 1
+                plt.legend()
+            
+            between_nodes_distance = np.linalg.norm(np.array([out_node_x, out_node_y]) - np.array([in_node_x, in_node_y]))
+            if between_nodes_distance > distance_threshold:
+                continue
+            # out <- prv1 <- prv2 <- ... <- prvN
+            out_segment = get_corresponding_lane_segment(lane_graph, out_node_id, segment_max_length=segment_max_length)
+            # in -> nxt1 -> nxt2 -> ... -> nxtN
+            in_segment = get_corresponding_lane_segment(lane_graph, in_node_id, segment_max_length=segment_max_length)
+            
+            if len(out_segment) < 2 or len(in_segment) < 2:
+                print(f"Warning: segment too short for out_node {out_node_id} or in_node {in_node_id}")
+                continue
+            out_angle_rad = get_segment_average_angle(lane_graph, out_segment)
+            in_angle_rad = get_segment_average_angle(lane_graph, in_segment)
+            # print(f"Out node {out_node_id} angle: {np.degrees(out_angle_rad):.2f} degrees, In node {in_node_id} angle: {np.degrees(in_angle_rad):.2f} degrees")
+            starting_node_vector = np.array([np.cos(out_angle_rad), np.sin(out_angle_rad)])
+            ending_node_vector = np.array([np.cos(in_angle_rad), np.sin(in_angle_rad)])
+            topology_score = np.dot(starting_node_vector, ending_node_vector)
+            
+            connected = False
+            turning = False
+            if topology_score <= turning_threshold:
+                connected = False
+                turning = False
+            elif topology_score > turning_threshold and topology_score <= topology_threshold:
+                connected = True
+                turning = True
+            elif topology_score > topology_threshold:
+                connected = True
+                turning = False
+
+            print(f'cos angle: {np.rad2deg(np.arccos(topology_score)):.2f}, distance: {between_nodes_distance:.2f}, connected: {connected}, turning: {turning}')
+            if connected:
+                if turning:
+                    intersection_point = intersection_of_extended_segments(lane_graph, out_segment, in_segment, length=150)
+                    if intersection_point is None or intersection_point[0] < 0 or intersection_point[0] >= self.image_size or intersection_point[1] < 0 or intersection_point[1] >= self.image_size:
+                        continue
+                    p0_pos = (out_node_x, out_node_y)
+                    p1_pos = (out_node_x + np.cos(out_angle_rad), out_node_y + np.sin(out_angle_rad))
+                    p2_pos = (intersection_point[0] + np.cos(in_angle_rad), intersection_point[1] + np.sin(in_angle_rad))
+                    p3_pos = (in_node_x, in_node_y)
+                    connections[(out_node_id, in_node_id)] = {
+                        "turning": turning,
+                        "topology_score": topology_score,
+                        "points": [p0_pos, p1_pos, p2_pos, p3_pos]
+                    }
+                    plt.plot([p0_pos[0], p1_pos[0], p2_pos[0], p3_pos[0]], [p0_pos[1], p1_pos[1], p2_pos[1], p3_pos[1]], c='m')
+                else:
+                    p0_pos = (out_node_x, out_node_y)
+                    p1_pos = (in_node_x, in_node_y)
+                    connections[(out_node_id, in_node_id)] = {
+                        "turning": turning,
+                        "topology_score": topology_score,
+                        "points": [p0_pos, p1_pos]
+                    }
+                    plt.plot([out_node_x, in_node_x], [out_node_y, in_node_y], c='g')
+                
+        plt.title(f"Extracted Connections: {len(connections)}")
+        plt.savefig("extracted_connections.png")
+        return connections
+    
+    
+    
     def _extract_turning_lane(self, lane_graph: nx.DiGraph, reachable_node_pairs: List[Tuple[int, int]], input_satellite_image: np.ndarray, direction_context: np.ndarray, gpu_id: int = 0, radius: float = 5.0):
         # Build KDTree for efficient nearest-neighbor search
         out_nodes = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "out"]
@@ -470,7 +595,7 @@ class LaneGraphExtraction():
 
 
 
-    def extract_lane_graph(self, input_satellite_image, output_path='./'):
+    def extract_lane_graph(self, input_satellite_image, output_path=None, mode='rule_based'):
         """
         Extracts lane graph from the satellite image.
         
@@ -481,7 +606,6 @@ class LaneGraphExtraction():
             nx.DiGraph: Extracted lane graph.
         """
         print("Extracting lane graph from the satellite image...")
-
 
         if isinstance(input_satellite_image, str):
             image_name = os.path.basename(input_satellite_image).split('.')[0]
@@ -495,28 +619,34 @@ class LaneGraphExtraction():
         lane_graph = self._extract_lane_and_direction(input_satellite_image, self.gpu_id)
         lane_graph = refine_lane_graph(lane_graph, isolated_threshold=30, spur_threshold=10)
         lane_graph = annotate_node_types(lane_graph)
-        lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=2)
-        lane_graph = annotate_node_types(lane_graph)
-        lane_graph = refine_lane_graph_with_curves(lane_graph)
+        # lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=5.0)
+        
+        # lane_graph = refine_lane_graph_with_curves(lane_graph)
+        # lane_graph = annotate_node_types(lane_graph)
         lane_graph_non_intersection = lane_graph.copy()
-        # lane_prediced, direction_predicted = segmentation2graph.draw_directed_graph(lane_graph)
-        # print(f"Number of nodes in lane graph: {len(lane_graph.nodes)}")
-        # # # Step 2: Reachable Lane Extraction
-        # reachable_node_pairs = self.extract_valid_turning_pairs(lane_graph, 
-        #                                                   input_satellite_image, 
-        #                                                   direction_predicted, 
-        #                                                   self.gpu_id)
-        # print(f"Number of reachable node pairs: {len(reachable_node_pairs)}")
-        #  # Step 3: Lane Extraction
-        # lane_graph = self._extract_turning_lane(lane_graph, 
-        #                                          reachable_node_pairs, 
-        #                                          input_satellite_image, 
-        #                                          direction_predicted, 
-        #                                          gpu_id=self.gpu_id,
-        #                                          radius=5.0)
-        # for node in lane_graph.nodes:
-        #      print(f"Node: {node}, Type: {lane_graph.nodes[node]['type']}")
-        lane_graph_final = lane_graph.copy()
+        lane_prediced, direction_predicted = segmentation2graph.draw_directed_graph(lane_graph)
+
+        if mode == 'rule_based':
+            connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
+                                                              segment_max_length=5, 
+                                                              turning_threshold=-0.8, 
+                                                              topology_threshold=0.8)
+            print(f"Number of connections: {len(connections)}")
+        elif mode == 'model_based':
+            # Step 2: Reachable Lane Extraction
+            reachable_node_pairs = self.extract_valid_turning_pairs_model_based(lane_graph, 
+                                                              input_satellite_image, 
+                                                              direction_predicted[..., 0:2], 
+                                                              self.gpu_id)
+            print(f"Number of reachable node pairs: {len(reachable_node_pairs)}")
+            # Step 3: Turning Lane Extraction
+            lane_graph_final = self._extract_turning_lane(lane_graph, 
+                                                     reachable_node_pairs, 
+                                                     input_satellite_image, 
+                                                     direction_predicted, 
+                                                     gpu_id=self.gpu_id,
+                                                     radius=5.0)
+
 
         if output_path is not None:
             if not os.path.exists(output_path):
@@ -557,11 +687,11 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config, gpu_id=0)
-    input_satellite_img_path = "test_non_intersection.jpg"  # Path to the input satellite image
-    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, output_path=None)
-    lanes_and_links_gdf = lane_graph_extraction.extract_lanes_and_links_geojson(lane_graph_final,
-        origin=(0, 0),
-        resolution=(0.125, 0.125),
-        output_path=None,
-        crs_proj=None
-    )
+    input_satellite_img_path = "test_intersection.jpg"  # Path to the input satellite image
+    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, output_path='./')
+    # lanes_and_links_gdf = lane_graph_extraction.extract_lanes_and_links_geojson(lane_graph_final,
+    #     origin=(0, 0),
+    #     resolution=(0.125, 0.125),
+    #     output_path=None,
+    #     crs_proj=None
+    # )
