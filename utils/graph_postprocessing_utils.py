@@ -30,7 +30,6 @@ def refine_lane_graph(
         for node in component_nodes:
             component_assignments[node] = comp_id
     component_stats = _calculate_component_statistics(lane_graph, component_assignments)
-
     spur_nodes = _identify_spur_nodes(lane_graph, spur_threshold)
 
     def should_remove_node(node: Tuple[int, int]) -> bool:
@@ -308,6 +307,7 @@ def refine_lane_graph_with_curves(
                 nxt = next(G_dir.successors(current))
                 path.append(nxt)
                 current = nxt
+            path.append(current)
             process_segment(path)
 
     return refined_graph

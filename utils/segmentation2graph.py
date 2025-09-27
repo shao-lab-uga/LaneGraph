@@ -152,7 +152,7 @@ def extract_graph_from_image(
         for idx, (r, c) in enumerate(path):
             node = (r, c)
             if node not in G:
-                G.add_node(node, pos=(c, r))  # NetworkX expects (x, y)
+                G.add_node(node, pos=(c, r))
             if idx == 0 and prev_node_id is not None:
                 G.add_edge(prev_node_id, node)
             elif idx > 0:
