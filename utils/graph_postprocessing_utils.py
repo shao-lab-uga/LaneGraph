@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Set, DefaultDict, Optional
 
 
@@ -585,7 +586,6 @@ def segment_intersection(
 
 
 
-import matplotlib.pyplot as plt
 def intersection_of_extended_segments(
     G: nx.DiGraph,
     in_segment: list,
@@ -610,3 +610,41 @@ def intersection_of_extended_segments(
     # plt.scatter(out_endpoint[0], out_endpoint[1], c='blue')
     # ---- Compute intersection ----
     return segment_intersection(in_line[0], in_line[1], out_line[0], out_line[1])
+
+
+def sample_straight_line(p0, p1, delta=5):
+    p0, p1 = np.array(p0, dtype=float), np.array(p1, dtype=float)
+    vec = p1 - p0
+    dist = np.linalg.norm(vec)
+    n_steps = int(np.floor(dist / delta))
+    if n_steps == 0:
+        return [tuple(map(int, p0)), tuple(map(int, p1))]
+    direction = vec / dist
+    points = [p0 + i * delta * direction for i in range(n_steps + 1)]
+    points.append(p1)  # ensure last point
+    return [tuple(map(int, np.round(pt))) for pt in points]
+
+def sample_bezier_curve(p0, p1, p2, p3, delta=5, oversample=200):
+    # Step 1: oversample
+    ts = np.linspace(0, 1, oversample)
+    curve = ( (1-ts)**3)[:,None]*p0 + \
+            (3*(1-ts)**2*ts)[:,None]*p1 + \
+            (3*(1-ts)*ts**2)[:,None]*p2 + \
+            (ts**3)[:,None]*p3
+    # Step 2: cumulative distance
+    dists = np.cumsum([0] + [np.linalg.norm(curve[i]-curve[i-1]) for i in range(1, len(curve))])
+    total_len = dists[-1]
+    # Step 3: resample at equal arc-length
+    target_dists = np.arange(0, total_len, delta)
+    sampled = []
+    for td in target_dists:
+        idx = np.searchsorted(dists, td)
+        if idx == 0:
+            pt = curve[0]
+        else:
+            # linear interpolation
+            t = (td - dists[idx-1]) / (dists[idx] - dists[idx-1] + 1e-9)
+            pt = (1-t) * curve[idx-1] + t * curve[idx]
+        sampled.append(tuple(map(int, np.round(pt))))
+    sampled.append(tuple(map(int, np.round(p3))))
+    return sampled

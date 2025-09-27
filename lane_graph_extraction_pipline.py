@@ -29,7 +29,9 @@ from utils.graph_postprocessing_utils import (refine_lane_graph,
                                               get_node_types,
                                               get_corresponding_lane_segment,
                                               get_segment_average_angle,
-                                              intersection_of_extended_segments
+                                              intersection_of_extended_segments,
+                                              sample_straight_line,
+                                              sample_bezier_curve
                                               )
 from utils.image_postprocessing_utils import encode_direction_vectors_to_image
 
@@ -384,7 +386,6 @@ class LaneGraphExtraction():
                     p3_pos = (in_node_x, in_node_y)
                     connections[(out_node_id, in_node_id)] = {
                         "turning": turning,
-                        "topology_score": topology_score,
                         "points": [p0_pos, p1_pos, p2_pos, p3_pos]
                     }
                     plt.plot([p0_pos[0], p1_pos[0], p2_pos[0], p3_pos[0]], [p0_pos[1], p1_pos[1], p2_pos[1], p3_pos[1]], c='m')
@@ -393,7 +394,6 @@ class LaneGraphExtraction():
                     p1_pos = (in_node_x, in_node_y)
                     connections[(out_node_id, in_node_id)] = {
                         "turning": turning,
-                        "topology_score": topology_score,
                         "points": [p0_pos, p1_pos]
                     }
                     plt.plot([out_node_x, in_node_x], [out_node_y, in_node_y], c='g')
@@ -469,7 +469,27 @@ class LaneGraphExtraction():
 
         return lane_graph
 
-    
+    def _build_connecting_lanes(self, lane_graph: nx.DiGraph, connections: dict):
+        for (out_node_id, in_node_id), conn_info in connections.items():
+            points = conn_info["points"]
+            turning = conn_info["turning"]
+            if turning:
+                p0_pos, p1_pos, p2_pos, p3_pos = points
+                # Add intermediate nodes
+                intermediate_node1 = (int(p1_pos[0]), int(p1_pos[1]))
+                intermediate_node2 = (int(p2_pos[0]), int(p2_pos[1]))
+                if intermediate_node1 not in lane_graph.nodes:
+                    lane_graph.add_node(intermediate_node1, type='link')
+                if intermediate_node2 not in lane_graph.nodes:
+                    lane_graph.add_node(intermediate_node2, type='link')
+                # Add edges
+                lane_graph.add_edge((out_node_id), intermediate_node1)
+                lane_graph.add_edge(intermediate_node1, intermediate_node2)
+                lane_graph.add_edge(intermediate_node2, (in_node_id))
+            else:
+                p0_pos, p1_pos = points
+                lane_graph.add_edge((out_node_id), (in_node_id))
+        return lane_graph
     def pixel_to_geo(self, path, origin=(0, 0), resolution = (0.125, -0.125)):
         """Convert a pixel path to geographic coordinates (lon, lat or meters)."""
         lon0, lat0 = origin
@@ -631,7 +651,7 @@ class LaneGraphExtraction():
                                                               segment_max_length=5, 
                                                               turning_threshold=-0.8, 
                                                               topology_threshold=0.8)
-            print(f"Number of connections: {len(connections)}")
+            lane_graph_final = self._build_connecting_lanes(lane_graph, connections)
         elif mode == 'model_based':
             # Step 2: Reachable Lane Extraction
             reachable_node_pairs = self.extract_valid_turning_pairs_model_based(lane_graph, 
