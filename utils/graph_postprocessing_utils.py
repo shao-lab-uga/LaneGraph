@@ -1,8 +1,46 @@
 import numpy as np
 import networkx as nx
+from shapely import Point
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Set, DefaultDict, Optional
 
+def point_distance(a: Tuple[int, int], b: Tuple[int, int]) -> float:
+    """Calculates euclidian distance between 2 points.
+
+    Args:
+        a (Tuple[int, int]): Tuple representing coordinates of the first point.
+        b (Tuple[int, int]): Tuple representing coordinates of the second point.
+
+    Returns:
+        float: Euclidian distance between two points.
+    """
+    dx = a[0] - b[0]
+    dy = a[1] - b[1]
+    return float(np.sqrt(dx**2 + dy**2))
+
+
+def point_line_distance(
+    point: Tuple[int, int], start: Tuple[int, int], end: Tuple[int, int]
+) -> float:
+    """Calculate the shortest distance between a point and a line defined by 2 points.
+
+    Args:
+        point (Tuple[int, int]): Tuple representing coordinates of point.
+        start (Tuple[int, int]): Tuple representing coordinates of start point of line.
+        end (Tuple[int, int]): Tuple representing coordinates of end point of line.
+
+    Returns:
+        float: Shortest distance from point to line segment.
+    """
+    if start == end:
+        return point_distance(point, start)
+    else:
+        n = abs(
+            (end[0] - start[0]) * (start[1] - point[1])
+            - (start[0] - point[0]) * (end[1] - start[1])
+        )
+        d = np.sqrt((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2)
+        return float(n / d)
 
 def refine_lane_graph(
     lane_graph: nx.DiGraph,
@@ -611,18 +649,6 @@ def intersection_of_extended_segments(
     # ---- Compute intersection ----
     return segment_intersection(in_line[0], in_line[1], out_line[0], out_line[1])
 
-
-def sample_straight_line(p0, p1, delta=5):
-    p0, p1 = np.array(p0, dtype=float), np.array(p1, dtype=float)
-    vec = p1 - p0
-    dist = np.linalg.norm(vec)
-    n_steps = int(np.floor(dist / delta))
-    if n_steps == 0:
-        return [tuple(map(int, p0)), tuple(map(int, p1))]
-    direction = vec / dist
-    points = [p0 + i * delta * direction for i in range(n_steps + 1)]
-    points.append(p1)  # ensure last point
-    return [tuple(map(int, np.round(pt))) for pt in points]
 
 def sample_bezier_curve(p0, p1, p2, p3, delta=5, oversample=200):
     # Step 1: oversample

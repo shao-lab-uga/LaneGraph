@@ -5,46 +5,10 @@ import networkx as nx
 from pathlib import Path
 from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
-
+from utils.graph_postprocessing_utils import point_line_distance
 WINDOW_SIZE = 640
 
-def distance(a: Tuple[int, int], b: Tuple[int, int]) -> float:
-    """Calculates euclidian distance between 2 points.
 
-    Args:
-        a (Tuple[int, int]): Tuple representing coordinates of the first point.
-        b (Tuple[int, int]): Tuple representing coordinates of the second point.
-
-    Returns:
-        float: Euclidian distance between two points.
-    """
-    dx = a[0] - b[0]
-    dy = a[1] - b[1]
-    return float(np.sqrt(dx**2 + dy**2))
-
-
-def point_line_distance(
-    point: Tuple[int, int], start: Tuple[int, int], end: Tuple[int, int]
-) -> float:
-    """Calculate the shortest distance between a point and a line defined by 2 points.
-
-    Args:
-        point (Tuple[int, int]): Tuple representing coordinates of point.
-        start (Tuple[int, int]): Tuple representing coordinates of start point of line.
-        end (Tuple[int, int]): Tuple representing coordinates of end point of line.
-
-    Returns:
-        float: Shortest distance from point to line segment.
-    """
-    if start == end:
-        return distance(point, start)
-    else:
-        n = abs(
-            (end[0] - start[0]) * (start[1] - point[1])
-            - (start[0] - point[0]) * (end[1] - start[1])
-        )
-        d = np.sqrt((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2)
-        return float(n / d)
 
 
 def rdp(points: List[Tuple[int, int]], epsilon: float) -> List[Tuple[int, int]]:

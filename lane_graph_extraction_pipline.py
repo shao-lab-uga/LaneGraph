@@ -14,6 +14,7 @@ from itertools import product
 from skimage import morphology
 import imageio.v3 as imageio
 import matplotlib.pyplot as plt
+from shapely.affinity import scale
 from scipy.spatial import KDTree
 from shapely.geometry import LineString
 import utils.segmentation2graph as segmentation2graph
@@ -30,9 +31,19 @@ from utils.graph_postprocessing_utils import (refine_lane_graph,
                                               get_corresponding_lane_segment,
                                               get_segment_average_angle,
                                               intersection_of_extended_segments,
-                                              sample_straight_line,
                                               sample_bezier_curve
                                               )
+
+from utils.lane_process_utils import (get_junction_points, 
+                                      split_lines_at_junctions,
+                                      group_lanes_by_geometry,
+                                      infer_lane_directions_from_geometry,
+                                      compute_reference_lines_direction_aware,
+                                      assign_lane_ids_per_group
+                                      )
+
+from utils.connection_filtering import filter_connections_receive_aware
+from utils.gdf_visualize_utils import visualize_road_groups
 from utils.image_postprocessing_utils import encode_direction_vectors_to_image
 
 
@@ -132,15 +143,15 @@ class LaneGraphExtraction():
             m = (y < margin) | (y >= h - margin) | (x < margin) | (x >= w - margin)
             return m  # shape (H, W), dtype=bool
 
-        border_mask = margin_mask_bool(lane_predicted_image, margin=40)
+        border_mask = margin_mask_bool(lane_predicted_image, margin=20)
         lane_predicted_image[border_mask] = 0
         direction_predicted_image[border_mask] = 127
 
         
-        Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save("direction_predicted.jpg")
+        # Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save("direction_predicted.jpg")
         lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(5,5))
 
-        Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
+        # Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
         threshold = 32
         lane_predicted_image = lane_predicted_image >= threshold
         lane_predicted_image = morphology.thin(lane_predicted_image)
@@ -200,6 +211,7 @@ class LaneGraphExtraction():
         input_features_validation = einops.rearrange(input_features_validation, 'b h w c -> b c h w')
 
         return input_features_node_a, input_features_node_b, input_features_validation
+
     
     def _make_lane_extraction_input(
         self, node_pair: Tuple[Tuple[int, int], Tuple[int, int]], input_satellite_image, direction_context, gpu_id=0
@@ -238,6 +250,7 @@ class LaneGraphExtraction():
         input_features = einops.rearrange(input_features, 'b h w c -> b c h w')
 
         return input_features
+
 
     def extract_valid_turning_pairs_model_based(self, lane_graph: nx.DiGraph, input_satellite_image, direction_context, gpu_id=0):
         """
@@ -291,7 +304,7 @@ class LaneGraphExtraction():
         # Image.fromarray(debug_image.astype(np.uint8)).save("debug_reachable_lane_pairs.jpg")
         return reachable_node_pairs
 
-
+    
     def extract_connections_rule_based(self, lane_graph: nx.DiGraph, segment_max_length=5, distance_threshold=250, turning_threshold=-0.8, topology_threshold=0.8):
         """
         Extracts valid connections from the lane graph.
@@ -318,6 +331,8 @@ class LaneGraphExtraction():
         plt.figure(figsize=(10,10))
         idx = 0
         for out_node_id, in_node_id in node_pairs:
+            if out_node_id == (np.int64(285), np.int64(196)) and in_node_id == (np.int64(234), np.int64(373)):
+                print("Debugging for this pair")
             # nodes near in_node based on distance
             in_node_neighbors = [
                 n for n in lane_graph.nodes
@@ -364,6 +379,7 @@ class LaneGraphExtraction():
             ending_node_vector = np.array([np.cos(in_angle_rad), np.sin(in_angle_rad)])
             dot_val = np.dot(starting_node_vector, ending_node_vector)
             cross_val = np.cross(starting_node_vector, ending_node_vector)
+            
             connected = False
             turning = False
             if dot_val <= turning_threshold:
@@ -379,7 +395,7 @@ class LaneGraphExtraction():
             # print(f'cos angle: {np.rad2deg(np.arccos(topology_score)):.2f}, distance: {between_nodes_distance:.2f}, connected: {connected}, turning: {turning}')
             if connected:
                 if turning:
-                    intersection_point = intersection_of_extended_segments(lane_graph, out_segment, in_segment, length=150)
+                    intersection_point = intersection_of_extended_segments(lane_graph, out_segment, in_segment, length=200)
                     if intersection_point is None or intersection_point[0] < 0 or intersection_point[0] >= self.image_size or intersection_point[1] < 0 or intersection_point[1] >= self.image_size:
                         continue
                     p0_pos = (out_node_x, out_node_y)
@@ -450,7 +466,7 @@ class LaneGraphExtraction():
             # Add link_graph's nodes and edges into lane_graph
             for node in link_nodes:
                 if node not in lane_graph.nodes:
-                    lane_graph.add_node(node, type='link')
+                    lane_graph.add_node(node, pos=link_graph.nodes[node]["pos"], type='link')
             for u, v in link_graph.edges:
                 lane_graph.add_edge(u, v)
 
@@ -511,11 +527,18 @@ class LaneGraphExtraction():
         origin_x, origin_y = origin
         origin_m = (origin_x, origin_y)
 
-        def pixel_to_meter(path, origin_m, resolution):
+        def pixel_to_geo(path, origin_m, resolution):
             x0, y0 = origin_m
             dx, dy = resolution
-            return [(x0 + x * dx, y0 - y * dy) for (x, y) in path]
-
+            geopath = []
+            for node_id in path:
+                x, y = lane_graph.nodes[node_id].get("pos", (0, 0))
+                print(f"Node {node_id} pixel pos: ({x}, {y})")
+                mx = x0 + x * dx
+                my = y0 + y * dy
+                geopath.append((mx, my))
+            return geopath
+        
         rows = []
         fid_counter = 0
         node_to_fid = {}
@@ -545,14 +568,14 @@ class LaneGraphExtraction():
             if not (is_lane or is_link):
                 return None
 
-            geo_path = pixel_to_meter(path, origin_m=origin_m, resolution=resolution)
+            geo_path = pixel_to_geo(path, origin_m=origin_m, resolution=resolution)
             geometry = LineString(geo_path)
 
-            fid = fid_counter
+            fid = str(fid_counter)
             fid_counter += 1
 
             row = {
-                "fid": str(fid),
+                "fid": fid,
                 "type": "lane" if is_lane else "link",
                 "subtype": f"{src_type}->{tgt_type}",
                 "start_node_id": str(src),
@@ -628,7 +651,6 @@ class LaneGraphExtraction():
         return gdf, lane_graph
 
 
-
     def extract_lane_graph(self, input_satellite_image, output_path=None, mode='rule_based'):
         """
         Extracts lane graph from the satellite image.
@@ -664,17 +686,27 @@ class LaneGraphExtraction():
             # assign the lane idx
             lanes_and_links_gdf, lane_graph_with_fids = self.extract_lanes_and_links_geojson(lane_graph,
                 origin=(0, 0),
-                resolution=(0.125, 0.125),
+                resolution=(0.125, -0.125),
                 output_path='./',
                 crs_proj=None
             )
+            lanes_gdf = lanes_and_links_gdf[lanes_and_links_gdf['type'] == 'lane'].reset_index(drop=True)
+            # get lane information (e.g., lane id, direction, road id)
+            
+            
+            lanes_gdf = self.extract_lane_info(lanes_gdf)
+            lanes_gdf['geometry'] = lanes_gdf['geometry'].apply(lambda line: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]))
             # get possible connections
             connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
                                                               segment_max_length=5, 
-                                                              distance_threshold=300,
+                                                              distance_threshold=350,
                                                               turning_threshold=-0.8, 
                                                               topology_threshold=0.8)
-            lane_graph_final = self._build_connecting_lanes(lane_graph, connections)
+            print(f"Number of connections before filtering by lane templates: {len(connections)}")
+            
+            connections_filtered = filter_connections_receive_aware(connections=connections, lane_graph=lane_graph_with_fids, lanes_gdf=lanes_gdf)
+            print(f"Number of connections after filtering by lane templates: {len(connections_filtered)}")
+            lane_graph_final = self._build_connecting_lanes(lane_graph, connections_filtered)
         elif mode == 'model_based':
             # Step 2: Reachable Lane Extraction
             reachable_node_pairs = self.extract_valid_turning_pairs_model_based(lane_graph, 
@@ -686,7 +718,7 @@ class LaneGraphExtraction():
             lane_graph_final = self._extract_turning_lane(lane_graph, 
                                                      reachable_node_pairs, 
                                                      input_satellite_image, 
-                                                     direction_predicted, 
+                                                     direction_predicted[..., 0:2], 
                                                      gpu_id=self.gpu_id,
                                                      radius=5.0)
 
@@ -701,6 +733,13 @@ class LaneGraphExtraction():
             
         return lane_graph_non_intersection, lane_graph_final
     
+    
+
+        
+        
+        
+        
+        
     def extract_lanes_and_links_geojson(self, lane_graph, origin=(0, 0), resolution=(0.125, 0.125), output_path='./', crs_proj=CRS.from_epsg(3857)):
         """
         Extracts lanes and links from the lane graph and saves them as a GeoJSON file.
@@ -723,6 +762,37 @@ class LaneGraphExtraction():
             segmentation2graph.visualize_lanes_and_links(lanes_and_links_gdf, save_path=output_path, image_name=f"lane_links")
         return lanes_and_links_gdf, lane_graph_with_fids
 
+    def extract_lane_info(self, lanes_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """
+        Annotates road information to the lane graph based on the lanes GeoDataFrame.
+
+        Args:
+            lane_graph (nx.DiGraph): Input lane graph.
+            lanes_gdf (gpd.GeoDataFrame): GeoDataFrame containing lanes information.
+
+        """
+        junction_points = get_junction_points(lanes_gdf)
+        lanes_gdf_splitted = split_lines_at_junctions(lanes_gdf, junction_points)
+        lanes_gdf_grouped = group_lanes_by_geometry(
+            lanes_gdf_splitted,
+            spacing=0.5,          # Resample step along each line (in CRS units, e.g., meters).
+            avg_tol=10,          # Max symmetric avg. perpendicular distance to treat lanes as the same corridor.
+            endpoint_tol=10,     # Endpoint proximity threshold: at least one valid endpoint pair must be within this.
+            angle_tol_deg=25.0,   # Max heading difference to be considered "same direction" (excludes ~180° flips).
+            serial_reject_tol=1.5,# If start-end or end-start is <= this (when same direction), reject as serial (head-to-tail).
+            min_overlap_ratio=0.2,# Min fraction of the shorter line that must overlap the longer one (0..1).
+            pair_expand=6.0       # Search radius to gather candidate neighbors before detailed checks.
+            )
+        # visualize_road_groups(lanes_gdf_grouped, label_col='road_id', save_path='./')
+        lanes_gdf_grouped = infer_lane_directions_from_geometry(lanes_gdf_grouped)
+        lanes_gdf, reference_lines = compute_reference_lines_direction_aware(lanes_gdf_grouped)
+        lanes_gdf = assign_lane_ids_per_group(lanes_gdf, reference_lines)
+        # [ ] convert the geometry back to image coordinates
+        
+        return lanes_gdf
+        
+        
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="options")
     parser.add_argument("--config", type=str, default="configs/lane_graph_extraction_pipline.py", help="config file")
@@ -730,6 +800,6 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config, gpu_id=0)
-    input_satellite_img_path = "test_non_intersection.jpg"  # Path to the input satellite image
-    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, output_path='./')
+    input_satellite_img_path = "test_intersection.jpg"  # Path to the input satellite image
+    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="model_based",output_path='./')
     

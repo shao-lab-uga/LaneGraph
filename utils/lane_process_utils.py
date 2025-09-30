@@ -1,21 +1,19 @@
 
 import numpy as np
 import geopandas as gpd
+from typing import Dict
 from collections import defaultdict
 from shapely.ops import substring
 from scipy.interpolate import splprep, splev
 from shapely.geometry import LineString, MultiLineString, Point, MultiLineString
 
 
-
-
-
-
 def densify(line, interval=1.0):
     n = int(line.length / interval)
     return LineString([line.interpolate(i * interval) for i in range(n + 1)])
 
-def resample_linestring(line: LineString, spacing=0.5, smoothing=0.001):
+
+def refine_linestring(line: LineString, spacing=0.5, smoothing=0.001):
     coords = np.array(line.coords)
     if len(coords) < 3:
         return line  # too short to refine
@@ -44,8 +42,6 @@ def resample_linestring(line: LineString, spacing=0.5, smoothing=0.001):
     return LineString(new_coords)
 
 
-
-
 def resample_line_spacing(line: LineString, spacing: float = 0.5) -> LineString:
     """
     Resample a LineString at ~uniform spacing along arc length.
@@ -56,6 +52,17 @@ def resample_line_spacing(line: LineString, spacing: float = 0.5) -> LineString:
         return line
     n = int(L // spacing) + 2
     return LineString([line.interpolate(d) for d in np.linspace(0, L, n)])
+
+
+def resample_line_points(geom:LineString, num_points=50):
+    """
+    Resample a LineString to a fixed number of points (including endpoints).
+    """
+    return np.array([
+        geom.interpolate(i / (num_points - 1), normalized=True).coords[0]
+        for i in range(num_points)
+    ])
+
 
 def _reverse_ls(ls: LineString) -> LineString:
     """Return the reversed polyline (endpoints swapped)."""
@@ -271,30 +278,17 @@ def group_lanes_by_geometry(
     return gdf.drop(columns=["geometry_resampled"])
 
 
-
-
-
-
-
-def get_junction_points(gdf_lanes, tol=1.0):
+def get_junction_points(lanes_gdf: gpd.GeoDataFrame) -> list[Point]:
     """
-    Collect split and merge points from annotated lane start/end types.
+    Collect split and merge points from annotated lane node types.
     """
     points = []
-    for _, row in gdf_lanes.iterrows():
+    for _, row in lanes_gdf.iterrows():
         if row["start_type"] in {"merge"}:
             points.append(Point(row.geometry.coords[0]))
         if row["end_type"] in {"split"}:
             points.append(Point(row.geometry.coords[-1]))
     return points
-
-
-
-
-
-
-
-
 
 
 def _snap_point_to_line(line: LineString, pt: Point):
@@ -325,8 +319,9 @@ def _segments_via_substring(line: LineString, cut_ds, min_seg_len=0.25):
             segs.append(substring(line, a, b, normalized=False))
     return segs
 
+
 def split_lines_at_junctions(
-    gdf_lines: gpd.GeoDataFrame,
+    lanes_gdf: gpd.GeoDataFrame,
     junction_points: list[Point],
     tol: float = 1.0,
     min_gap: float = 0.25,
@@ -339,16 +334,16 @@ def split_lines_at_junctions(
     (without relying on object identity).
     """
     if keep_cols is None:
-        keep_cols = [c for c in gdf_lines.columns if c != "geometry"]
+        keep_cols = [c for c in lanes_gdf.columns if c != "geometry"]
 
     if not junction_points:
-        out = gdf_lines.copy()
+        out = lanes_gdf.copy()
         out["seg_idx"] = 0
         out["n_segs"] = 1
         return out
 
     # Build a GeoSeries for junction points and try GeoPandas sindex first
-    gs_pts = gpd.GeoSeries(junction_points, crs=gdf_lines.crs)
+    gs_pts = gpd.GeoSeries(junction_points, crs=lanes_gdf.crs)
     sindex = getattr(gs_pts, "sindex", None)
 
     # Fallback: Shapely STRtree (no id mapping)
@@ -361,7 +356,7 @@ def split_lines_at_junctions(
             tree = None  # final fallback: brute force filter by intersects
 
     out_rows = []
-    for _, row in gdf_lines.iterrows():
+    for _, row in lanes_gdf.iterrows():
         geom = row.geometry
         attrs = row[keep_cols].to_dict()
 
@@ -409,11 +404,11 @@ def split_lines_at_junctions(
             new_row["n_segs"] = n
             out_rows.append(new_row)
 
-    return gpd.GeoDataFrame(out_rows, geometry="geometry", crs=gdf_lines.crs)
+    return gpd.GeoDataFrame(out_rows, geometry="geometry", crs=lanes_gdf.crs)
 
 
 
-def infer_lane_directions_from_geometry(gdf_lanes, num_points=10, head_segment_length=3):
+def infer_lane_directions_from_geometry(gdf_lanes, head_segment_length=3):
     """
     Infer lane direction using the signed angle between each lane and a reference lane.
     Assigns lane_dir = 1 if aligned with reference, -1 otherwise.
@@ -450,14 +445,6 @@ def infer_lane_directions_from_geometry(gdf_lanes, num_points=10, head_segment_l
 
     return gdf_lanes
 
-
-
-
-def resample_line_points(geom:LineString, num_points=50):
-    return np.array([
-        geom.interpolate(i / (num_points - 1), normalized=True).coords[0]
-        for i in range(num_points)
-    ])
 
 def compute_signed_offset(ref_pts, lane_pts, method="mean"):
     """
@@ -497,19 +484,18 @@ def shift_reference_line_to_outer_edge(center_line, shift_amount):
     shifted_coords = coords + shift_amount * normal
     return LineString(shifted_coords)
 
-def compute_reference_lines_direction_aware(gdf_lanes, num_points=50, average_lane_width=False):
+def compute_reference_lines_direction_aware(lanes_gdf: gpd.GeoDataFrame, num_points=50, average_lane_width=False):
     """
     Compute reference lines and lane widths for each road_id in gdf_lanes.
     Adds: lane_width, lane_offset, avg_offset
     Returns: dict {road_id: LineString}, updated gdf_lanes
     """
     ref_lines = {}
-    gdf_lanes = gdf_lanes.copy()
-    gdf_lanes["lane_width"] = 0.0
-    gdf_lanes["lane_offset"] = 0.0
-    gdf_lanes["avg_offset"] = 0.0
+    lanes_gdf["lane_width"] = 0.0
+    lanes_gdf["lane_offset"] = 0.0
+    lanes_gdf["avg_offset"] = 0.0
 
-    for road_id, group in gdf_lanes.groupby("road_id"):
+    for road_id, group in lanes_gdf.groupby("road_id"):
         lanes_pos = group[group["lane_dir"] == 1]
         lanes_neg = group[group["lane_dir"] == -1]
         group = group.reset_index()
@@ -544,37 +530,37 @@ def compute_reference_lines_direction_aware(gdf_lanes, num_points=50, average_la
             for _, row in group.iterrows():
                 lane_pts = resample_line_points(row.geometry, num_points)
                 offset = compute_signed_offset(center_coords, lane_pts, method="trimmed")
-                gdf_lanes.at[row["index"], "avg_offset"] = offset
+                lanes_gdf.at[row["index"], "avg_offset"] = offset
 
             # Compute left/right separately
             group_idx = group["index"].values
-            avg_offsets = gdf_lanes.loc[group_idx, "avg_offset"]
+            avg_offsets = lanes_gdf.loc[group_idx, "avg_offset"]
             left_mask = avg_offsets < 0
             right_mask = avg_offsets > 0
 
             left_indices = group_idx[left_mask.values]
             right_indices = group_idx[right_mask.values]
             
-            left_lanes = gdf_lanes.loc[left_indices].copy().sort_values(by="avg_offset", ascending=False)
-            right_lanes = gdf_lanes.loc[right_indices].copy().sort_values(by="avg_offset")
+            left_lanes = lanes_gdf.loc[left_indices].copy().sort_values(by="avg_offset", ascending=False)
+            right_lanes = lanes_gdf.loc[right_indices].copy().sort_values(by="avg_offset")
 
             offset_acc = 0.0
             for idx, row in left_lanes.iterrows():
-                center = abs(gdf_lanes.at[idx, "avg_offset"])
+                center = abs(lanes_gdf.at[idx, "avg_offset"])
                 width = 2 * (center - offset_acc)
-                gdf_lanes.at[idx, "lane_width"] = width
-                gdf_lanes.at[idx, "lane_offset"] = offset_acc
+                lanes_gdf.at[idx, "lane_width"] = width
+                lanes_gdf.at[idx, "lane_offset"] = offset_acc
                 offset_acc += width
 
             offset_acc = 0.0
             for idx, row in right_lanes.iterrows():
-                center = abs(gdf_lanes.at[idx, "avg_offset"])
+                center = abs(lanes_gdf.at[idx, "avg_offset"])
                 width = 2 * (center - offset_acc)
-                gdf_lanes.at[idx, "lane_width"] = width
-                gdf_lanes.at[idx, "lane_offset"] = offset_acc
+                lanes_gdf.at[idx, "lane_width"] = width
+                lanes_gdf.at[idx, "lane_offset"] = offset_acc
                 offset_acc += width
             if average_lane_width:
-                gdf_lanes["lane_width"] = gdf_lanes.groupby("road_id")["lane_width"].transform("mean")
+                lanes_gdf["lane_width"] = lanes_gdf.groupby("road_id")["lane_width"].transform("mean")
         else:
             print(f"Processing one-directional road: {road_id}")
             sampled_lines = []
@@ -595,60 +581,56 @@ def compute_reference_lines_direction_aware(gdf_lanes, num_points=50, average_la
             for _, row in group.iterrows():
                 lane_pts = resample_line_points(row.geometry, num_points)
                 offset = compute_signed_offset(center_coords, lane_pts, method="trimmed")
-                gdf_lanes.at[row["index"], "avg_offset"] = offset
+                lanes_gdf.at[row["index"], "avg_offset"] = offset
                 
             group_idx = group["index"].values
-            avg_offsets = gdf_lanes.loc[group_idx, "avg_offset"]
+            avg_offsets = lanes_gdf.loc[group_idx, "avg_offset"]
             left_mask = avg_offsets < 0
             right_mask = avg_offsets > 0
 
             left_indices = group_idx[left_mask.values]
             right_indices = group_idx[right_mask.values]
             
-            left_lanes = gdf_lanes.loc[left_indices].copy().sort_values(by="avg_offset", ascending=False)
-            right_lanes = gdf_lanes.loc[right_indices].copy().sort_values(by="avg_offset")
+            left_lanes = lanes_gdf.loc[left_indices].copy().sort_values(by="avg_offset", ascending=False)
+            right_lanes = lanes_gdf.loc[right_indices].copy().sort_values(by="avg_offset")
 
             offset_acc = 0.0
             for idx, row in left_lanes.iterrows():
-                center = abs(gdf_lanes.at[idx, "avg_offset"])
+                center = abs(lanes_gdf.at[idx, "avg_offset"])
                 width = 2 * (center - offset_acc)
-                gdf_lanes.at[idx, "lane_width"] = width
-                gdf_lanes.at[idx, "lane_offset"] = offset_acc
+                lanes_gdf.at[idx, "lane_width"] = width
+                lanes_gdf.at[idx, "lane_offset"] = offset_acc
                 offset_acc += width
 
             offset_acc = 0.0
             for idx, row in right_lanes.iterrows():
-                center = abs(gdf_lanes.at[idx, "avg_offset"])
+                center = abs(lanes_gdf.at[idx, "avg_offset"])
                 width = 2 * (center - offset_acc)
-                gdf_lanes.at[idx, "lane_width"] = width
-                gdf_lanes.at[idx, "lane_offset"] = offset_acc
+                lanes_gdf.at[idx, "lane_width"] = width
+                lanes_gdf.at[idx, "lane_offset"] = offset_acc
                 offset_acc += width
             if average_lane_width:
-                gdf_lanes["lane_width"] = gdf_lanes.groupby("road_id")["lane_width"].transform("mean")
+                lanes_gdf["lane_width"] = lanes_gdf.groupby("road_id")["lane_width"].transform("mean")
             sorted_lanes = group.reindex(np.argsort(np.abs(group["avg_offset"])))
             offset_acc = 0.0
-            # Compute left/right separately
-
-
             # Shift to outer edge
             outermost = sorted_lanes.iloc[-1]
-            print(gdf_lanes.at[outermost["index"], "lane_width"])
-            shift_amount = abs(gdf_lanes.at[outermost["index"], "avg_offset"]) + 0.5 * gdf_lanes.at[outermost["index"], "lane_width"]
+            print(lanes_gdf.at[outermost["index"], "lane_width"])
+            shift_amount = abs(lanes_gdf.at[outermost["index"], "avg_offset"]) + 0.5 * lanes_gdf.at[outermost["index"], "lane_width"]
             ref_line = shift_reference_line_to_outer_edge(center_line, shift_amount)
 
         ref_lines[road_id] = ref_line
 
-    return ref_lines, gdf_lanes
+    return lanes_gdf, ref_lines
 
 
-def assign_lane_ids_per_group(gdf_lanes, ref_lines, num_points=50):
+def assign_lane_ids_per_group(lanes_gdf: gpd.GeoDataFrame, ref_lines: Dict[int, LineString], num_points=50):
     """
     Assign OpenDRIVE-compliant lane IDs (+1, -1, etc.) based on signed lateral offset.
     No flipping of geometry is done here.
     """
-    gdf_lanes = gdf_lanes.copy()
 
-    for road_id, group in gdf_lanes.groupby("road_id"):
+    for road_id, group in lanes_gdf.groupby("road_id"):
         ref_line: LineString = ref_lines[road_id]
         ref_pts = np.array([[pt.x, pt.y] for pt in [ref_line.interpolate(d) for d in np.linspace(0, ref_line.length, num_points)]])
 
@@ -662,14 +644,11 @@ def assign_lane_ids_per_group(gdf_lanes, ref_lines, num_points=50):
             signed_offset = row['avg_offset']
             lane_offsets.append((idx, signed_offset))
 
-        # Sort by offset
-        # sorted_lanes = sorted(lane_offsets, key=lambda x: x[1])
-        # sort the positive and negative offsets separately
+        # Sort by offset: sort the positive (left) and negative (right) offsets separately
         left_lanes = [x for x in lane_offsets if x[1] > 0]
         right_lanes = [x for x in lane_offsets if x[1] < 0]
         sorted_left_lanes = sorted(left_lanes, key=lambda x: x[1])
         sorted_right_lanes = sorted(right_lanes, key=lambda x: x[1], reverse=True)
-        
 
         lane_id_map = {}
         current_left = -1
@@ -684,7 +663,7 @@ def assign_lane_ids_per_group(gdf_lanes, ref_lines, num_points=50):
             current_right += 1
 
         for idx, (lid, side) in lane_id_map.items():
-            gdf_lanes.at[idx, "lane_id"] = lid
-            gdf_lanes.at[idx, "lane_side"] = side
+            lanes_gdf.at[idx, "lane_id"] = lid
+            lanes_gdf.at[idx, "lane_side"] = side
  
-    return gdf_lanes
+    return lanes_gdf

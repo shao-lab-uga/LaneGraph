@@ -1,12 +1,11 @@
+import os
 import numpy as np
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from shapely.geometry import LineString
 
-def resample_line_points(line, num_points=50):
-    """Uniformly sample a fixed number of points along the line."""
-    return np.array([[pt.x, pt.y] for pt in [line.interpolate(d) for d in np.linspace(0, line.length, num_points)]])
-    
+
 def visualize_road_groups_with_reference_lines(gdf_lanes, ref_lines, ax=None, cmap='tab20'):
     """
     Visualize road_id groups in color, and overlay reference lines in bold black.
@@ -29,7 +28,11 @@ def visualize_road_groups_with_reference_lines(gdf_lanes, ref_lines, ax=None, cm
     for rid in unique_ids:
         group = gdf_lanes[gdf_lanes["road_id"] == rid]
         group.plot(ax=ax, color=color_map[rid], linewidth=1.5, label=rid, alpha=0.6)
-
+    # plot the fid text
+    for idx, row in gdf_lanes.iterrows():
+        if "fid" in row:
+            x, y = row.geometry.interpolate(0.5, normalized=True).xy
+            ax.text(x[0], y[0], str(row["fid"]), fontsize=8, color='black', ha='center', va='center')
     # Plot each reference line in black
     for rid, ref_geom in ref_lines.items():
         gpd.GeoSeries([ref_geom]).plot(ax=ax, color='black', linewidth=3, zorder=10)
@@ -40,6 +43,7 @@ def visualize_road_groups_with_reference_lines(gdf_lanes, ref_lines, ax=None, cm
     ax.legend(loc='best', title="road_id")
 
     return ax
+
 
 def visualize_links_with_ref_lines(gdf_links, figsize=(10, 10), save_path=None):
     """
@@ -65,11 +69,11 @@ def visualize_links_with_ref_lines(gdf_links, figsize=(10, 10), save_path=None):
 
     if save_path:
         plt.savefig(save_path, dpi=300)
-        print(f"[✓] Saved to {save_path}")
     else:
         plt.show()
 
-def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20', label_col='road_id'):
+
+def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20', label_col='road_id', save_path=None):
     """
     Visualize grouped lanes with different colors based on label_col.
     """
@@ -93,81 +97,86 @@ def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20', label_col='road_id')
     ax.grid(True)
     ax.legend(loc='best', title=label_col)
 
+    if save_path:
+        plt.savefig(os.path.join(save_path, "lane_groups.png"), dpi=300)
+    else:
+        plt.show()
+
     return ax
 
 
-def compute_avg_lateral_offsets(gdf_lanes, ref_lines, num_points=50):
+def plot_lane_directions(lanes_gdf:gpd.GeoDataFrame, title="Lane Directions", figsize=(10, 10), arrow_length=5):
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    for _, row in lanes_gdf.iterrows():
+        geom = row.geometry
+        if not isinstance(geom, LineString) or len(geom.coords) < 2:
+            continue
+
+        coords = list(geom.coords)
+        x, y = zip(*coords)
+        ax.plot(x, y, color='gray', linewidth=1, alpha=0.6)
+
+        # Direction arrow
+        start = np.array(coords[0])
+        end = np.array(coords[-1])
+        dir_vec = end - start
+        dir_vec = dir_vec / (np.linalg.norm(dir_vec) + 1e-8) * arrow_length
+
+        # Choose color by direction
+        dir_val = row.get("lane_dir", 0)
+        color = "blue" if dir_val == 1 else "red" if dir_val == -1 else "black"
+
+        ax.arrow(start[0], start[1], dir_vec[0], dir_vec[1],
+                 head_width=1.0, head_length=1.5, fc=color, ec=color)
+
+    ax.set_title(title)
+    ax.set_aspect('equal')
+    plt.grid(True)
+    plt.show()
+
+
+def plot_lane_cuts(gdf_lanes, junction_points, cut_length=5.0, tol=1.0, figsize=(10, 10)):
     """
-    Compute average signed lateral offset from each lane centerline to its reference line.
-    Adds: 'avg_offset' column to the GeoDataFrame.
+    Plot lanes, junction points, and orthogonal cut lines.
     """
-    gdf_lanes = gdf_lanes.copy()
-    offsets = []
+    fig, ax = plt.subplots(figsize=figsize)
 
-    for idx, row in gdf_lanes.iterrows():
-        road_id = row["road_id"]
-        lane_line = row["geometry"]
-        ref_line = ref_lines[road_id]
+    # Plot lanes
+    for _, row in gdf_lanes.iterrows():
+        x, y = row.geometry.xy
+        ax.plot(x, y, color="gray", linewidth=1.5)
 
-        lane_pts = resample_line_points(lane_line, num_points=num_points)
-        ref_pts = resample_line_points(ref_line, num_points=num_points)
+    # Plot junctions and cut lines
+    for jp in junction_points:
+        ax.plot(jp.x, jp.y, "ro", markersize=6, label="junction" if "junction" not in ax.get_legend_handles_labels()[1] else "")
 
-        signed_dists = []
-        for i in range(len(ref_pts) - 1):
-            # Reference direction vector
-            p0 = ref_pts[i]
-            p1 = ref_pts[i + 1]
-            t = p1 - p0
-            t_norm = np.linalg.norm(t)
-            if t_norm < 1e-6:
-                continue
-            t_unit = t / t_norm
-            n = np.array([-t_unit[1], t_unit[0]])  # left-hand normal
+        # Find nearest lane for visualization
+        nearest_geom = min(gdf_lanes.geometry, key=lambda g: g.distance(jp))
+        if nearest_geom.distance(jp) < tol:
+            proj_dist = nearest_geom.project(jp)
+            nearest_pt = nearest_geom.interpolate(proj_dist)
 
-            # Corresponding lane point
-            q = lane_pts[i]
+            # Tangent vector
+            delta = 1e-6 * nearest_geom.length
+            before = nearest_geom.interpolate(max(proj_dist - delta, 0))
+            after = nearest_geom.interpolate(min(proj_dist + delta, nearest_geom.length))
+            tangent = np.array(after.coords[0]) - np.array(before.coords[0])
+            tangent /= (np.linalg.norm(tangent) + 1e-8)
 
-            # Vector from ref point to lane point
-            v = q - p0
-            signed_dist = np.dot(v, n)  # projection onto normal
-            signed_dists.append(signed_dist)
+            # Orthogonal vector
+            normal = np.array([-tangent[1], tangent[0]])
 
-        avg_offset = np.mean(signed_dists)
-        offsets.append(avg_offset)
+            # Cutting line
+            cut_line = LineString([
+                nearest_pt.coords[0] - cut_length * normal,
+                nearest_pt.coords[0] + cut_length * normal
+            ])
 
-    gdf_lanes["avg_offset"] = offsets
-    return gdf_lanes
+            x, y = cut_line.xy
+            ax.plot(x, y, "b--", linewidth=2, label="cut line" if "cut line" not in ax.get_legend_handles_labels()[1] else "")
 
-
-def assign_lane_widths_and_offsets(gdf_lanes_with_offsets):
-    gdf = gdf_lanes_with_offsets.copy()
-    gdf["lane_width"] = 0.0
-    gdf["lane_offset"] = 0.0
-
-    for road_id, group in gdf.groupby("road_id"):
-        # LEFT lanes (avg_offset < 0): more negative = farther from center
-        left_lanes = group[group["lane_side"] == "left"].copy()
-        left_lanes = left_lanes.sort_values("avg_offset", ascending=False)
-
-        offset_acc = 0.0
-        for idx, row in left_lanes.iterrows():
-            center = row["avg_offset"]
-            width = 2 * abs(abs(center) - offset_acc)
-            gdf.at[idx, "lane_width"] = width
-            gdf.at[idx, "lane_offset"] = offset_acc
-            offset_acc += width
-
-        # RIGHT lanes (avg_offset > 0): closer to 0 = inner lane
-        right_lanes = group[group["lane_side"] == "right"].copy()
-        right_lanes = right_lanes.sort_values("avg_offset")  # from 1.8 → 5.4
-
-        offset_acc = 0.0
-        for idx, row in right_lanes.iterrows():
-            center = row["avg_offset"]
-            width = 2 * abs(center - offset_acc)
-            gdf.at[idx, "lane_width"] = width
-            gdf.at[idx, "lane_offset"] = offset_acc
-            offset_acc += width
-
-    return gdf
-
+    ax.set_aspect("equal")
+    ax.legend()
+    ax.set_title("Lane cuts at junctions (red=junction, blue=cut line)")
+    plt.show()
