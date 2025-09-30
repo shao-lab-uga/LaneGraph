@@ -161,6 +161,7 @@ def _lane_endpoints(row: pd.Series) -> Tuple[np.ndarray, np.ndarray]:
 
 def build_directed_legs_per_junction(
     lanes_gdf: pd.DataFrame,
+    reference_lines: Dict[int, LineString],
     lane_graph: nx.DiGraph,
     junction_centers: Dict[int, Point],
     *,
@@ -189,25 +190,41 @@ def build_directed_legs_per_junction(
 
     approaches_raw, departures_raw = defaultdict(list), defaultdict(list)
     approaches_raw_key_set, departures_raw_key_set = set(), set()
-    for _, r in lanes_gdf.iterrows():
-        rid, ldir = r['road_id'], int(r['lane_dir'])
-        node_pos_start, node_pos_end = _lane_endpoints(r)
-        junction_id_start, junction_dist_start = _nearest_j(node_pos_start, in_nodes)
-        junction_id_end,   junction_dist_end   = _nearest_j(node_pos_end, out_nodes)
+
+    for road_id, reference_line in reference_lines.items():
+        ref_start_pos = np.asarray(reference_line.coords[0], float)
+        ref_end_pos   = np.asarray(reference_line.coords[-1], float)
+
+        junction_id_start, junction_dist_start = _nearest_j(ref_start_pos, in_nodes)
+        junction_id_end,   junction_dist_end   = _nearest_j(ref_end_pos, out_nodes)
         # choose the closer junction node between start and end
         ## if the end node is closer to the junction then its an approach
-        ## if the start node is closer to the junction then its a departure
+        
         if junction_dist_end is not None and (junction_dist_start is None or junction_dist_end
             <= junction_dist_start) and junction_dist_end <= attach_tol:
             j = junction_id_end
-            approaches_raw[(rid, ldir, j)].append(r)
-            approaches_raw_key_set.add((rid, ldir, j))
+            lanes_same_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==1)]
+
+            for _, r in lanes_same_direction.iterrows():
+                approaches_raw[(road_id, 1, j)].append(r)
+                approaches_raw_key_set.add((road_id, 1, j))
+            lanes_opposite_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==-1)]
+            for _, r in lanes_opposite_direction.iterrows():
+                departures_raw[(road_id, -1, j)].append(r)
+                departures_raw_key_set.add((road_id, -1, j))
+        ## if the start node is closer to the junction then its a departure
         elif junction_dist_start is not None and (junction_dist_end is None or junction_dist_start
             < junction_dist_end) and junction_dist_start <= attach_tol:
             j = junction_id_start
+            lanes_same_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==1)]
+            for _, r in lanes_same_direction.iterrows():
+                departures_raw[(road_id, 1, j)].append(r)
+                departures_raw_key_set.add((road_id, 1, j))
             
-            departures_raw[(rid, ldir, j)].append(r)
-            departures_raw_key_set.add((rid, ldir, j))
+            lanes_opposite_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==-1)]
+            for _, r in lanes_opposite_direction.iterrows():
+                approaches_raw[(road_id, -1, j)].append(r)
+                approaches_raw_key_set.add((road_id, -1, j))
 
     def _pack(buckets, approaching_junc: bool):
         legs = {}
@@ -338,11 +355,11 @@ def filter_connections_receive_aware(
     connections: Dict[Tuple[int,int], Dict],
     lane_graph: nx.DiGraph,
     lanes_gdf: pd.DataFrame,
+    reference_lines: Dict[int, LineString],
     *,
     junction_eps: float=150.0,
     attach_tol: float=100.0,
-    angle_tol_deg: float=40.0,
-    offset_is_driver_signed: bool=True
+    angle_tol_deg: float=60.0,
 ) -> Dict[Tuple[int,int], Dict]:
     """
     Keeps only connections that:
@@ -361,13 +378,17 @@ def filter_connections_receive_aware(
         min_roads=2,
         merge_tol=8.0             # tweak if intersections split/merge oddly
     )
-
+    from matplotlib import pyplot as plt
+    fig, ax = plt.subplots()
+    for j, c in centers.items():
+        ax.plot(c.x, c.y, 'go')
+    plt.savefig('detected_junctions.png')
     node_jid = nx.get_node_attributes(lane_graph, 'junc_id')
     node_fid = nx.get_node_attributes(lane_graph, 'fid')
 
     # 2) build directed legs per junction (ordered by driver-left→right)
     legs_in, legs_out = build_directed_legs_per_junction(
-        lanes_gdf, lane_graph, centers,
+        lanes_gdf, reference_lines, lane_graph, centers,
         attach_tol=attach_tol,
     )
 

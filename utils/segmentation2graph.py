@@ -268,7 +268,37 @@ def draw_directed_graph(
 
     return out_lane, out_normal
 
+def draw_inputs(
+    G: nx.DiGraph
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generates inputs for turning lane extraction processes. Creates lane mask and normal map using directed graph.
 
+    Args:
+        G (nx.DiGraph): Directed graph where node names are (row, col)
+        save_path (Optional[Path], optional): Directory path to save outputs to. Defaults to None.
 
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: _description_
+    """
+    out_lane = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 1))
+    out_normal = np.full((WINDOW_SIZE, WINDOW_SIZE, 2), 127, dtype=np.uint8)
 
+    for u, v in G.edges():
+        ux = u[1]
+        uy = u[0]
+        vx = v[1]
+        vy = v[0]
+
+        dx = vx - ux
+        dy = vy - uy
+
+        length = np.sqrt(float((dx**2 + dy**2))) + 0.001
+        dx /= length
+        dy /= length
+        color = (127 + int(dx * 127), 127 + int(dy * 127), 127)
+
+        cv2.line(out_lane, (ux, uy), (vx, vy), (255, 255, 255), 5)
+        cv2.line(out_normal, (ux, uy), (vx, vy), color, 5)
+
+    return out_lane, out_normal
 

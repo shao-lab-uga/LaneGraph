@@ -143,7 +143,7 @@ class LaneGraphExtraction():
             m = (y < margin) | (y >= h - margin) | (x < margin) | (x >= w - margin)
             return m  # shape (H, W), dtype=bool
 
-        border_mask = margin_mask_bool(lane_predicted_image, margin=20)
+        border_mask = margin_mask_bool(lane_predicted_image, margin=40)
         lane_predicted_image[border_mask] = 0
         direction_predicted_image[border_mask] = 127
 
@@ -331,8 +331,7 @@ class LaneGraphExtraction():
         plt.figure(figsize=(10,10))
         idx = 0
         for out_node_id, in_node_id in node_pairs:
-            if out_node_id == (np.int64(285), np.int64(196)) and in_node_id == (np.int64(234), np.int64(373)):
-                print("Debugging for this pair")
+            
             # nodes near in_node based on distance
             in_node_neighbors = [
                 n for n in lane_graph.nodes
@@ -680,7 +679,7 @@ class LaneGraphExtraction():
         lane_graph = refine_lane_graph_with_curves(lane_graph)
         lane_graph = annotate_node_types(lane_graph)
         lane_graph_non_intersection = lane_graph.copy()
-        lane_prediced, direction_predicted = segmentation2graph.draw_directed_graph(lane_graph)
+        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph)
 
         if mode == 'rule_based':
             # assign the lane idx
@@ -694,8 +693,11 @@ class LaneGraphExtraction():
             # get lane information (e.g., lane id, direction, road id)
             
             
-            lanes_gdf = self.extract_lane_info(lanes_gdf)
+            lanes_gdf, reference_lines = self.extract_lane_info(lanes_gdf)
+            # [ ] convert the geometry back to image coordinates
             lanes_gdf['geometry'] = lanes_gdf['geometry'].apply(lambda line: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]))
+            # also the reference lines
+            reference_lines = {road_id: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]) for road_id, line in reference_lines.items()}
             # get possible connections
             connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
                                                               segment_max_length=5, 
@@ -704,7 +706,10 @@ class LaneGraphExtraction():
                                                               topology_threshold=0.8)
             print(f"Number of connections before filtering by lane templates: {len(connections)}")
             
-            connections_filtered = filter_connections_receive_aware(connections=connections, lane_graph=lane_graph_with_fids, lanes_gdf=lanes_gdf)
+            connections_filtered = filter_connections_receive_aware(connections=connections, 
+                                                                    lane_graph=lane_graph_with_fids, 
+                                                                    lanes_gdf=lanes_gdf,
+                                                                    reference_lines=reference_lines)
             print(f"Number of connections after filtering by lane templates: {len(connections_filtered)}")
             lane_graph_final = self._build_connecting_lanes(lane_graph, connections_filtered)
         elif mode == 'model_based':
@@ -734,12 +739,6 @@ class LaneGraphExtraction():
         return lane_graph_non_intersection, lane_graph_final
     
     
-
-        
-        
-        
-        
-        
     def extract_lanes_and_links_geojson(self, lane_graph, origin=(0, 0), resolution=(0.125, 0.125), output_path='./', crs_proj=CRS.from_epsg(3857)):
         """
         Extracts lanes and links from the lane graph and saves them as a GeoJSON file.
@@ -787,9 +786,9 @@ class LaneGraphExtraction():
         lanes_gdf_grouped = infer_lane_directions_from_geometry(lanes_gdf_grouped)
         lanes_gdf, reference_lines = compute_reference_lines_direction_aware(lanes_gdf_grouped)
         lanes_gdf = assign_lane_ids_per_group(lanes_gdf, reference_lines)
-        # [ ] convert the geometry back to image coordinates
         
-        return lanes_gdf
+        
+        return lanes_gdf, reference_lines
         
         
     
