@@ -104,7 +104,7 @@ class LaneGraphExtraction():
         )
         self.lane_extraction_model.to(gpu_id)
 
-    def _extract_lane_and_direction(self, input_satellite_image: np.ndarray, gpu_id=0):
+    def _extract_lane_and_direction(self, input_satellite_image: np.ndarray, gpu_id=0, output_path=None, image_name=None) -> nx.DiGraph:
         """
         Extracts lane and direction from the satellite image.
         
@@ -149,12 +149,13 @@ class LaneGraphExtraction():
         direction_predicted_image[border_mask] = 127
 
         
-        # Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save("direction_predicted.jpg")
-        lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(5,5))
-
-        # Image.fromarray(lane_predicted_image.astype(np.uint8)).save("lane_predicted.jpg")
-        threshold = 32
+        
+        lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
+        
+        threshold = 64
         lane_predicted_image = lane_predicted_image >= threshold
+        Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save(os.path.join(output_path, f"direction_predicted_{image_name}"))
+        Image.fromarray(lane_predicted_image.astype(np.uint8)).save(os.path.join(output_path, f"lane_predicted_{image_name}"))
         lane_predicted_image = morphology.thin(lane_predicted_image)
         #
         lane_graph = segmentation2graph.extract_graph_from_image(lane_predicted_image)
@@ -638,7 +639,9 @@ class LaneGraphExtraction():
                             row["from_fid"] = str(candidate["fid"])
                         if candidate["start_node_id"] == tgt:
                             row["to_fid"] = str(candidate["fid"])
-
+        if len(rows) == 0:
+            print("Warning: No lanes or links extracted.")
+            return None, lane_graph
         gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=crs_proj)
         gdf.drop(
             columns=["start_node_id", "end_node_id", "subtype", "edge_nodes", "start_x", "start_y", "end_x", "end_y"],
@@ -673,11 +676,11 @@ class LaneGraphExtraction():
             raise ValueError("input_satellite_image should be a file path or a numpy array.")
         
         # # Step 1: Lane and Direction Extraction
-        lane_graph = self._extract_lane_and_direction(input_satellite_image, self.gpu_id)
+        lane_graph = self._extract_lane_and_direction(input_satellite_image, self.gpu_id, output_path, image_name)
         lane_graph = annotate_node_types(lane_graph)
-        # lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=50.0, topology_threshold=0.8)
-        # lane_graph = annotate_node_types(lane_graph)
-        lane_graph = refine_lane_graph(lane_graph, isolated_threshold=20, spur_threshold=10)
+        lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=10.0, topology_threshold=0.8)
+        lane_graph = annotate_node_types(lane_graph)
+        lane_graph = refine_lane_graph(lane_graph, isolated_threshold=30, spur_threshold=10)
         lane_graph = annotate_node_types(lane_graph)
         lane_graph = refine_lane_graph_with_curves(lane_graph)
         lane_graph = annotate_node_types(lane_graph)
@@ -692,36 +695,45 @@ class LaneGraphExtraction():
                 output_path=None,
                 crs_proj=None
             )
-            lanes_gdf = lanes_and_links_gdf[lanes_and_links_gdf['type'] == 'lane'].reset_index(drop=True)
-            # get lane information (e.g., lane id, direction, road id)
-
-
-            lanes_gdf, reference_lines, fids_to_remove = self.extract_lane_info(lanes_gdf)
-            # remove nodes and edges with fids_to_remove
-            lanes_gdf = lanes_gdf[~lanes_gdf['fid'].isin(fids_to_remove)].reset_index(drop=True)
-            reference_lines = {road_id: line for road_id, line in reference_lines.items() if road_id in lanes_gdf['road_id'].values}
-            lane_graph_with_fids.remove_nodes_from([n for n, d in lane_graph_with_fids.nodes(data=True) if d.get("fid") in fids_to_remove])
-            lane_graph_with_fids.remove_edges_from([ (u, v) for u, v, d in lane_graph_with_fids.edges(data=True) if d.get("fid") in fids_to_remove])
-            # [ ] convert the geometry back to image coordinates
-            lanes_gdf['geometry'] = lanes_gdf['geometry'].apply(lambda line: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]))
-            # also the reference lines
-            reference_lines = {road_id: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]) for road_id, line in reference_lines.items()}
-            # get possible connections
-            connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
+            if lanes_and_links_gdf is None:
+                print("Warning: No lanes extracted.")
+                connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
                                                               segment_max_length=5, 
                                                               distance_threshold=400,
                                                               turning_threshold=-0.8, 
-                                                              topology_threshold=0.8)
-            # print(f"Number of connections before filtering by lane templates: {len(connections)}")
-            
-            connections_filtered = filter_connections_receive_aware(connections=connections, 
-                                                                    lane_graph=lane_graph_with_fids, 
-                                                                    lanes_gdf=lanes_gdf,
-                                                                    reference_lines=reference_lines,
-                                                                    attach_tol=220.0
-                                                                    )
-            # print(f"Number of connections after filtering by lane templates: {len(connections_filtered)}")
-            lane_graph_final = self._build_connecting_lanes(lane_graph, connections_filtered)
+                                                              topology_threshold=0.9)
+                lane_graph_final = self._build_connecting_lanes(lane_graph, connections)
+            else:
+                lanes_gdf = lanes_and_links_gdf[lanes_and_links_gdf['type'] == 'lane'].reset_index(drop=True)
+                # get lane information (e.g., lane id, direction, road id)
+
+
+                lanes_gdf, reference_lines, fids_to_remove = self.extract_lane_info(lanes_gdf)
+                # remove nodes and edges with fids_to_remove
+                lanes_gdf = lanes_gdf[~lanes_gdf['fid'].isin(fids_to_remove)].reset_index(drop=True)
+                reference_lines = {road_id: line for road_id, line in reference_lines.items() if road_id in lanes_gdf['road_id'].values}
+                lane_graph_with_fids.remove_nodes_from([n for n, d in lane_graph_with_fids.nodes(data=True) if d.get("fid") in fids_to_remove])
+                lane_graph_with_fids.remove_edges_from([ (u, v) for u, v, d in lane_graph_with_fids.edges(data=True) if d.get("fid") in fids_to_remove])
+                # [ ] convert the geometry back to image coordinates
+                lanes_gdf['geometry'] = lanes_gdf['geometry'].apply(lambda line: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]))
+                # also the reference lines
+                reference_lines = {road_id: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]) for road_id, line in reference_lines.items()}
+                # get possible connections
+                connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
+                                                                segment_max_length=5, 
+                                                                distance_threshold=400,
+                                                                turning_threshold=-0.8, 
+                                                                topology_threshold=0.8)
+                # print(f"Number of connections before filtering by lane templates: {len(connections)}")
+                
+                connections_filtered = filter_connections_receive_aware(connections=connections, 
+                                                                        lane_graph=lane_graph_with_fids, 
+                                                                        lanes_gdf=lanes_gdf,
+                                                                        reference_lines=reference_lines,
+                                                                        attach_tol=220.0
+                                                                        )
+                # print(f"Number of connections after filtering by lane templates: {len(connections_filtered)}")
+                lane_graph_final = self._build_connecting_lanes(lane_graph, connections_filtered)
         elif mode == 'model_based':
             # Step 2: Reachable Lane Extraction
             reachable_node_pairs = self.extract_valid_turning_pairs_model_based(lane_graph, 

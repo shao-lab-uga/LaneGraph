@@ -197,7 +197,7 @@ def visualize_lanes_and_links(gdf, ax=None, lane_color='blue', link_color='red',
     return ax
 
 def draw_directed_graph(
-    G: nx.DiGraph, ax: Optional[plt.Axes] = None, save_path: Optional[Path] = None, image_name: Optional[str] = None
+    G: nx.DiGraph, ax: Optional[plt.Axes] = None, save_path: Optional[Path] = None, image_name: Optional[str] = None, region_size: int = WINDOW_SIZE
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Draw a directed graph with colored nodes and edges, generating lane mask and normal map.
 
@@ -209,8 +209,8 @@ def draw_directed_graph(
         Tuple[np.ndarray, np.ndarray]: Tuple containing the lane mask image and normal map image.
     """
     # Initialize output images: lane mask (white edges on black) and normal map (directional vectors)
-    out_lane = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 3), dtype=np.uint8)
-    out_normal = np.full((WINDOW_SIZE, WINDOW_SIZE, 3), 127, dtype=np.uint8)
+    out_lane = np.zeros((region_size, region_size, 3), dtype=np.uint8)
+    out_normal = np.full((region_size, region_size, 3), 127, dtype=np.uint8)
 
     # Draw edges as white lines on lane mask and directional colors on normal map
     for u, v in G.edges():

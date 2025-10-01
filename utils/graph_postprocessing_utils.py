@@ -351,13 +351,19 @@ def refine_lane_graph_with_curves(
         for succ in G_dir.successors(start):
             path = [start, succ]
             current = succ
+            visited = {start, succ}  # Track visited nodes to prevent cycles
             while current not in junction_nodes:
-                if not list(G_dir.successors(current)):
+                successors = list(G_dir.successors(current))
+                if not successors:
                     break
-                nxt = next(G_dir.successors(current))
+                nxt = successors[0]  # Take first successor
+                if nxt in visited:  # Cycle detected
+                    break
                 path.append(nxt)
+                visited.add(nxt)
                 current = nxt
-            path.append(current)
+            if current != path[-1]:  # Only append if not already at the end
+                path.append(current)
             process_segment(path)
 
     return refined_graph

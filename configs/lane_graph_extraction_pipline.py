@@ -54,7 +54,7 @@ config = dict(
         lane_and_direction_extraction_model=dict(
             in_channels = 3,  # Input channels for RGB images
             num_classes = 4,  # Output dimension for lane and direction extraction
-            weight_path="exp/LaneAndDirectionExtraction/checkpoints/epoch_250.pth",
+            weight_path="exp/LaneAndDirectionExtraction/checkpoints/epoch_310.pth",
         ),
         reachable_lane_extraction_validation_model=dict(
             reachable_lane_extraction_model=dict(
@@ -65,7 +65,7 @@ config = dict(
                 in_channels = 13,  
                 num_classes = 2,  
             ),
-            weight_path="exp/ReachableLaneValidation/checkpoints/epoch_250.pth",
+            weight_path="exp/ReachableLaneValidation/checkpoints/epoch_400.pth",
         ),
         lane_extraction_model=dict(
             in_channels = 14,  

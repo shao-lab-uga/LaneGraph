@@ -19,7 +19,7 @@ from roadstructure import LaneMap
 regions = json.load(open(sys.argv[1]))
 inputfolder = sys.argv[2]
 outputfolder = sys.argv[3]
-
+os.mkdir(outputfolder) if not os.path.exists(outputfolder) else None
 def find_centers(node_links, node_coordinates, threshold):
 
     def calculate_centroid(node_ids, coordinates_dict, int_flag=False):
@@ -145,12 +145,12 @@ for region in regions:
                 / math.cos(math.radians(min_lat)),
             ]
 
-            # img = cv2.imread(folder + "/sat_%d.jpg" % (counter))
             try:
                 labels = pickle.load(open(folder + "/sat_%d_label.p" % (counter), "rb"))
             except:
                 break
-
+            roadlabel: LaneMap
+            masklabel: LaneMap
             roadlabel, masklabel = labels
 
             # find all links

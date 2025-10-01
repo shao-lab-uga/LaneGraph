@@ -17,7 +17,7 @@ import pickle
 regions = json.load(open(sys.argv[1]))
 inputfolder = sys.argv[2]
 outputfolder = sys.argv[3]
-
+os.mkdir(outputfolder) if not os.path.exists(outputfolder) else None
 counter = 0
 counter_out = 0
 total_length = 0

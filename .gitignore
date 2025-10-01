@@ -18,7 +18,10 @@ validation_laneExtraction*/*
 # Pytorch Files
 *.pth
 **/__pycache__/*
-# Data files
+# Experiment files
 exp/*
-
+# Deprecated files
 deprecated/*
+# Processed data
+evaluation_data/*
+training_data/*
