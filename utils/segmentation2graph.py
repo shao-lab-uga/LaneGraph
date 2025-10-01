@@ -197,7 +197,7 @@ def visualize_lanes_and_links(gdf, ax=None, lane_color='blue', link_color='red',
     return ax
 
 def draw_directed_graph(
-    G: nx.DiGraph, save_path: Optional[Path] = None, image_name: Optional[str] = None
+    G: nx.DiGraph, ax: Optional[plt.Axes] = None, save_path: Optional[Path] = None, image_name: Optional[str] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Draw a directed graph with colored nodes and edges, generating lane mask and normal map.
 
@@ -214,6 +214,7 @@ def draw_directed_graph(
 
     # Draw edges as white lines on lane mask and directional colors on normal map
     for u, v in G.edges():
+        edge_type = G.edges[u, v].get("type", "unknown")
         ux, uy = G.nodes[u].get("pos", (0, 0))  # Convert (row, col) to (x, y)
         vx, vy = G.nodes[v].get("pos", (0, 0))
 
@@ -240,7 +241,7 @@ def draw_directed_graph(
         if node_type == "in":
             color = (0, 255, 0)     # Green for entry points
         elif node_type == "out":
-            color = (0, 0, 255)     # Red for exit points
+            color = (255, 0, 0)     # Red for exit points
         elif node_type == "lane":
             color = (0, 255, 255)   # Cyan for regular lane nodes
         elif node_type == "split":
@@ -251,16 +252,21 @@ def draw_directed_graph(
             color = (200, 200, 200) # Gray for unknown types
 
         # Draw node as filled circle
-        cv2.circle(out_lane, (x, y), 4, color, -1)
-        cv2.circle(out_normal, (x, y), 4, color, -1)
+        if node_type in ["in", "out"]:
+            cv2.circle(out_lane, (x, y), 4, color, -1)
+            cv2.circle(out_normal, (x, y), 4, color, -1)
+        # cv2.circle(out_lane, (x, y), 4, color, -1)
+        # cv2.circle(out_normal, (x, y), 4, color, -1)
 
-        # Add text annotation showing in-degree, out-degree, and node type
-        text = f"{in_deg},{out_deg},{node_type}"
-        cv2.putText(
-            out_lane, text, (x + 6, y - 6),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1, cv2.LINE_AA
-        )
-
+        # # Add text annotation showing in-degree, out-degree, and node type
+        # text = f"{in_deg},{out_deg},{node_type}"
+        # cv2.putText(
+        #     out_lane, text, (x + 6, y - 6),
+        #     cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1, cv2.LINE_AA
+        # )
+    if ax is not None:
+        ax.imshow(out_normal)
+        
     # Save images to disk if path is provided
     if save_path and image_name:
         cv2.imwrite(os.path.join(save_path, f"lane_{image_name}.png"), out_lane)

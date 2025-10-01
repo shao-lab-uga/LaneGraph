@@ -4,8 +4,13 @@ import pickle
 import numpy as np
 import networkx as nx
 import imageio.v3 as imageio
+import matplotlib.pyplot as plt
+import torch
+from lane_graph_extraction_pipline import LaneGraphExtraction
+from utils import segmentation2graph
 from utils.config_utils import load_config
-
+from evaluator.evaluator import GraphEvaluator
+    
 def adjust_node_positions(G, x_offset=0, y_offset=0):
     for n in G.nodes:
         node_position = G.nodes[n].get('pos', None)
@@ -16,7 +21,7 @@ def adjust_node_positions(G, x_offset=0, y_offset=0):
     return G
 
 
-def crop_graph(G, x_min, x_max, y_min, y_max, pos_attr="pos"):
+def crop_graph(G: nx.Graph, x_min, x_max, y_min, y_max, pos_attr="pos"):
     """
     Crop a networkx graph based on node coordinates.
 
@@ -105,8 +110,6 @@ class EvaluationDataloader:
 
             current_ind = random.choice(self.indrange) if ind is None else ind
             sat_img = self._load_sat_image_data(current_ind)
-            # Normalize images
-            sat_img = sat_img.astype(np.float64) / 255.0 - 0.5
             self.images[idx, :, :, :] = sat_img
             undirected_nonintersection_graph, directed_nonintersection_graph, full_directed_graph = self._load_graph_data(current_ind)
             self.undirected_nonintersection_graphs[idx] = undirected_nonintersection_graph
@@ -193,20 +196,64 @@ def get_test_dataloader(dataloaders_config):
     return test_dataloader
 
 if __name__ == "__main__":
-    config = load_config("configs/evaluation.py")
-    dataloaders_config = config.dataloaders
-    test_dataloader = get_test_dataloader(dataloaders_config)
-    sat_image, undirected_nonintersection_graph, directed_nonintersection_graph, full_directed_graph = test_dataloader.get_batch()
-    # try out the evaluator
-    from evaluator.evaluator import GraphEvaluator
-    import matplotlib.pyplot as plt
+    # ============= Load Configuration =============
+    evaluation_config = load_config("configs/evaluation.py")
+    pipline_config = load_config("configs/lane_graph_extraction_pipline.py")
+    lane_graph_extraction = LaneGraphExtraction(pipline_config, gpu_id=0)
+    dataloaders_config = evaluation_config.dataloaders
+    test_config = evaluation_config.test
+    random_seed = test_config.random_seed
+    np.random.seed(random_seed)
+    random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    epoch_size = test_config.epoch_size
+    max_epochs = test_config.max_epochs
+    
+    
+    
     evaluator = GraphEvaluator()
+    test_dataloader = get_test_dataloader(dataloaders_config)
+    metrics_dicts = []
+    
+    for epoch in range(max_epochs):
+        for batch_idx in range(epoch_size):
+            sat_image, undirected_nonintersection_graph_groundtruth, directed_nonintersection_graph_groundtruth, final_directed_graph_groundtruth = test_dataloader.get_batch()
+            directed_nonintersection_graph_predicted, final_directed_graph_predicted = lane_graph_extraction.extract_lane_graph(sat_image, mode="rule_based")
+            
+            # evaluate the directed_nonintersection_graph_predicted against directed_nonintersection_graph_groundtruth
+            metrics_dict = {"directed_nonintersection_graph":None, "final_directed_graph":None}
 
-    sat_image_vis = (sat_image + 0.5)*255.0
-    sat_image_vis = sat_image_vis.astype(np.uint8)
-    evaluator.set_aerial_image(sat_image_vis)
-    metrics_dict = evaluator.evaluate_graph(directed_nonintersection_graph, directed_nonintersection_graph, area_size=[640,640], lane_width=10)
-    print(metrics_dict)
-    fig, ax = plt.subplots(figsize=(10, 10))
-    evaluator.visualize_graph(G=directed_nonintersection_graph, ax=ax)
-    plt.savefig("test_visualization.png")
+
+            directed_nonintersection_graph_metrics_dict = evaluator.evaluate_graph(directed_nonintersection_graph_groundtruth, directed_nonintersection_graph_predicted, area_size=[640,640], lane_width=10)
+            metrics_dict["directed_nonintersection_graph"] = directed_nonintersection_graph_metrics_dict
+
+            final_directed_graph_metrics_dict = evaluator.evaluate_graph(final_directed_graph_groundtruth, final_directed_graph_predicted, area_size=[640,640], lane_width=10)
+            metrics_dict["final_directed_graph"] = final_directed_graph_metrics_dict
+
+            metrics_dicts.append(metrics_dict)
+            print(f"Epoch {epoch+1}/{max_epochs}, Batch {batch_idx+1}/{epoch_size}")
+            
+            sat_image_vis = sat_image.astype(np.uint8)
+            fig, axes = plt.subplots(1,3,figsize=(24,8))
+            # disable labels for all axes, keep the boder
+            for ax in axes:
+                ax.set_xticks([])
+                ax.set_yticks([])
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('black')
+                    spine.set_linewidth(2)
+            axes[0].imshow(sat_image_vis)
+            axes[0].set_aspect('auto')
+            axes[0].autoscale(False)
+            # tight layout
+            plt.tight_layout()
+            segmentation2graph.draw_directed_graph(final_directed_graph_groundtruth, ax=axes[1])
+            segmentation2graph.draw_directed_graph(final_directed_graph_predicted, ax=axes[2])
+            plt.savefig(os.path.join("evaluation_output", f"epoch_{epoch+1}_batch_{batch_idx+1}.png"))
+    
+    
+    
+    
+    
+    
+

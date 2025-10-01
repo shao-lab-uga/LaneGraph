@@ -24,9 +24,16 @@ max_epochs = 5
 config = dict(
 
     dataset_config=dataset_config,
+    test=dict(
+        random_seed=random_seed,
+        batch_size=batch_size,
+        epoch_size=epoch_size,
+        max_epochs=max_epochs,  
+    ),
     dataloaders=dict(
 
         test=dict(
+
             data_path=processed_data_path,
             image_size=input_image_size,
             dataset_image_size=dataset_image_size,

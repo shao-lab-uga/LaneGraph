@@ -267,8 +267,9 @@ def downsample_graph(
     return downsampled_graph
 
 def connect_nearby_dead_ends(
-    graph: nx.DiGraph,
-    connection_threshold: float = 30.0
+    lane_graph: nx.DiGraph,
+    connection_threshold: float = 30.0,
+    topology_threshold: float = 0.8,
 ) -> nx.DiGraph:
     """
     Connect nearby 'out' nodes to 'in' nodes in a DiGraph to reduce fragmentation.
@@ -280,28 +281,37 @@ def connect_nearby_dead_ends(
     Returns:
         The modified graph with new edges added between close 'out' and 'in' nodes.
     """
-    out_nodes = [n for n, d in graph.nodes(data=True) if d.get("type") == "out"]
-    in_nodes  = [n for n, d in graph.nodes(data=True) if d.get("type") == "in"]
+    out_nodes = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "out"]
+    in_nodes  = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "in"]
 
-    for out_node in out_nodes:
+    for out_node_id in out_nodes:
         closest_in = None
+        dot_val = -1.0
         min_distance = connection_threshold
 
-        for in_node in in_nodes:
+        for in_node_id in in_nodes:
             # skip if already connected
-            if graph.has_edge(out_node, in_node):
+            if lane_graph.has_edge(out_node_id, in_node_id) or lane_graph.has_edge(in_node_id, out_node_id):
                 continue
-            dist = _calculate_euclidean_distance(graph.nodes[out_node], graph.nodes[in_node])
-            
+            dist = _calculate_euclidean_distance(lane_graph.nodes[out_node_id], lane_graph.nodes[in_node_id])
+            # print(f"Distance from out {out_node_id} to in {in_node_id}: {dist:.1f}")
             if dist < min_distance:
                 min_distance = dist
-                closest_in = in_node
-
+                
+                out_segment = get_corresponding_lane_segment(lane_graph, out_node_id, segment_max_length=5)
+                in_segment = get_corresponding_lane_segment(lane_graph, in_node_id, segment_max_length=5)
+                out_angle_rad = get_segment_average_angle(lane_graph, out_segment)
+                in_angle_rad = get_segment_average_angle(lane_graph, in_segment)
+                
+                starting_node_vector = np.array([np.cos(out_angle_rad), np.sin(out_angle_rad)])
+                ending_node_vector = np.array([np.cos(in_angle_rad), np.sin(in_angle_rad)])
+                closest_in = in_node_id
+                dot_val = np.dot(starting_node_vector, ending_node_vector)
         # Add directed edge if found
-        if closest_in is not None:
-            graph.add_edge(out_node, closest_in)
+        if closest_in is not None and dot_val > topology_threshold:
+            lane_graph.add_edge(out_node_id, closest_in)
 
-    return graph
+    return lane_graph
 
 def refine_lane_graph_with_curves(
     G_dir: nx.DiGraph,
@@ -316,7 +326,7 @@ def refine_lane_graph_with_curves(
     - Use infer_majority_direction for consistent orientation
     """
     refined_graph = nx.DiGraph()
-    junction_nodes = {n for n, d in G_dir.nodes(data=True) if d.get("type") in {"split", "merge"}}
+    junction_nodes = {n for n, d in G_dir.nodes(data=True) if d.get("type") in {"split", "merge", "out"}}
 
     def process_segment(segment):
         """Simplify and insert segment into refined graph."""
@@ -341,7 +351,9 @@ def refine_lane_graph_with_curves(
         for succ in G_dir.successors(start):
             path = [start, succ]
             current = succ
-            while current not in junction_nodes and G_dir.out_degree(current) == 1:
+            while current not in junction_nodes:
+                if not list(G_dir.successors(current)):
+                    break
                 nxt = next(G_dir.successors(current))
                 path.append(nxt)
                 current = nxt

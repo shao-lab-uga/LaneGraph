@@ -55,7 +55,7 @@ def cluster_intersections_by_roads(
     min_samples: int = 1,            # DBSCAN core size (1 is fine here)
     min_roads: int = 2,              # REQUIRE at least this many DISTINCT roads per cluster
     merge_tol: float = 10.0          # merge nearby clusters (center-to-center) if they are the same intersection
-):
+)-> Dict[int, Point]:
     """
     Cluster ONLY 'in'/'out' nodes; keep a cluster as an intersection iff it contains nodes
     from >= min_roads DISTINCT road_ids (using node->fid->road_id). Assign contiguous junc_id
@@ -165,7 +165,7 @@ def build_directed_legs_per_junction(
     lane_graph: nx.DiGraph,
     junction_centers: Dict[int, Point],
     *,
-    attach_tol: float=15.0,
+    attach_tol: float=200.0,
 ):
     """
     Create directed legs per junc_id:
@@ -173,32 +173,31 @@ def build_directed_legs_per_junction(
       - departures[(road_id, lane_dir, j)]: lanes starting at j (start_type=='out'), ordered driver-left→right
     Also compute an average heading (toward end for approaches; from start for departures).
     """
-    pos = nx.get_node_attributes(lane_graph, 'pos')
-    typ = nx.get_node_attributes(lane_graph, 'type')
-    jid = nx.get_node_attributes(lane_graph, 'junc_id')
-
-    in_nodes  = [(n, np.asarray(pos[n], float), jid[n]) for n in lane_graph.nodes if typ.get(n)=='in'  and n in jid and n in pos]
-    out_nodes = [(n, np.asarray(pos[n], float), jid[n]) for n in lane_graph.nodes if typ.get(n)=='out' and n in jid and n in pos]
-
-    def _nearest_j(pt: np.ndarray, lst):
-        if not lst:
+    def _nearest_j(pt: np.ndarray, junction_centers: Dict[int, Point]):
+        if not junction_centers:
             return None, None
-        X = np.vstack([xy for _, xy, _ in lst])
-        d = np.linalg.norm(X - pt[None, :], axis=1)
-        k = int(np.argmin(d))
-        return lst[k][2], float(d[k])  # (junc_id, distance)
+        d = {k: point_distance(pt, np.asarray(c.coords[0], float)) for k, c in junction_centers.items()}
+        k = min(d, key=d.get)
+        
+        return k, d[k]
 
     approaches_raw, departures_raw = defaultdict(list), defaultdict(list)
     approaches_raw_key_set, departures_raw_key_set = set(), set()
 
     for road_id, reference_line in reference_lines.items():
+
         ref_start_pos = np.asarray(reference_line.coords[0], float)
         ref_end_pos   = np.asarray(reference_line.coords[-1], float)
 
-        junction_id_start, junction_dist_start = _nearest_j(ref_start_pos, in_nodes)
-        junction_id_end,   junction_dist_end   = _nearest_j(ref_end_pos, out_nodes)
+        junction_id_start, junction_dist_start = _nearest_j(ref_start_pos, junction_centers)
+        junction_id_end,   junction_dist_end   = _nearest_j(ref_end_pos, junction_centers)
+        # print(f"  -> reference line {road_id} starts at {junction_id_start} ({junction_dist_start}) and ends at {junction_id_end} ({junction_dist_end})")
         # choose the closer junction node between start and end
         ## if the end node is closer to the junction then its an approach
+        
+        if (junction_dist_end is None and junction_dist_start is None) or ((junction_dist_end > attach_tol) and (junction_dist_start > attach_tol)):
+            continue  # too far from any junction
+        
         
         if junction_dist_end is not None and (junction_dist_start is None or junction_dist_end
             <= junction_dist_start) and junction_dist_end <= attach_tol:
@@ -208,6 +207,7 @@ def build_directed_legs_per_junction(
             for _, r in lanes_same_direction.iterrows():
                 approaches_raw[(road_id, 1, j)].append(r)
                 approaches_raw_key_set.add((road_id, 1, j))
+                
             lanes_opposite_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==-1)]
             for _, r in lanes_opposite_direction.iterrows():
                 departures_raw[(road_id, -1, j)].append(r)
@@ -308,40 +308,27 @@ def design_receive_template(n: int, capL: int, capT: int, capR: int) -> List[set
         uses[0] = {'L'} if capL else {'T'}
         uses[1] = {'T'} | ({'R'} if capR else set())
         # trim through to capacity
-        while sum('T' in s for s in uses) > capT:
-            if 'T' in uses[1] and len(uses[1])>1: uses[1].remove('T')
-            elif 'T' in uses[0]: uses[0].discard('T'); break
+        
+        if 'T' in uses[1] and len(uses[1])>1: 
+            uses[1].remove('T')
+        elif 'T' in uses[0]:
+            uses[0].discard('T')
         return uses
     if n == 3:
         uses[0] = {'L'} if capL else {'T'}
         uses[1] = {'T'} | ({'L'} if capL else set())
         uses[2] = {'T'} | ({'R'} if capR else set())
         # trim through to capacity
-        while sum('T' in s for s in uses) > capT:
-            for i in [2,1,0]:
-                if 'T' in uses[i] and len(uses[i])>1:
-                    uses[i].remove('T'); break
+        
+        for i in [2,1,0]:
+            if 'T' in uses[i] and len(uses[i])>1:
+                uses[i].remove('T'); break
+        
     else:
         # n >= 3
         uses[0]  = {'L'} if capL else {'T'}
         uses[1]  = {'T'} if capT else ({'L'} if capL else set())
         uses[-1] = {'R'} if capR else ({'T'} if capT else set())
-
-    # # common tight-through case on 3-lane approaches
-    # if n == 3 and capT == 1:
-    #     if capL:
-    #         uses[1] |= {'L','T'}   # middle becomes L/T
-    #     if capR:
-    #         uses[-1] |= {'T','R'}  # curb becomes T/R
-    #     # trim T back to capacity=1 (drop shared T first)
-    #     while sum('T' in s for s in uses) > capT:
-    #         for i in [0,1,2]:
-    #             if 'T' in uses[i] and len(uses[i])>1:
-    #                 uses[i].remove('T'); break
-    #         else:
-    #             for i in [0,1,2]:
-    #                 if 'T' in uses[i]:
-    #                     uses[i].remove('T'); break
 
     for i in range(n):
         if not uses[i]:
@@ -358,7 +345,7 @@ def filter_connections_receive_aware(
     reference_lines: Dict[int, LineString],
     *,
     junction_eps: float=150.0,
-    attach_tol: float=100.0,
+    attach_tol: float=200.0,
     angle_tol_deg: float=60.0,
 ) -> Dict[Tuple[int,int], Dict]:
     """
@@ -378,11 +365,11 @@ def filter_connections_receive_aware(
         min_roads=2,
         merge_tol=8.0             # tweak if intersections split/merge oddly
     )
-    from matplotlib import pyplot as plt
-    fig, ax = plt.subplots()
-    for j, c in centers.items():
-        ax.plot(c.x, c.y, 'go')
-    plt.savefig('detected_junctions.png')
+    # from matplotlib import pyplot as plt
+    # fig, ax = plt.subplots()
+    # for j, c in centers.items():
+    #     ax.plot(c.x, c.y, 'go')
+    # plt.savefig('detected_junctions.png')
     node_jid = nx.get_node_attributes(lane_graph, 'junc_id')
     node_fid = nx.get_node_attributes(lane_graph, 'fid')
 
@@ -405,7 +392,7 @@ def filter_connections_receive_aware(
         if j_u is None or j_v is None or j_u != j_v:
             continue
         fu, fv = node_fid.get(u), node_fid.get(v)
-        print(f"Connection {u}->{v} with fids {fu}->{fv} at junc {j_u}")
+        # print(f"Connection {u}->{v} with fids {fu}->{fv} at junc {j_u}")
         if fu is None or fv is None:
             continue
 
@@ -419,6 +406,7 @@ def filter_connections_receive_aware(
             continue
 
         key_in = (ru.iloc[0]['road_id'], int(ru.iloc[0]['lane_dir']), j_u)
+
         if key_in not in legs_in:
             continue
 
@@ -430,6 +418,7 @@ def filter_connections_receive_aware(
     accepted = {}
     for j, approaches in cand.items():
         for key_in, by_mv in approaches.items():
+
             # receiving legs by angle inside this junction
             L_leg, T_leg, R_leg = pick_receiving_legs(legs_in, legs_out, key_in, angle_tol_deg=angle_tol_deg)
 
@@ -470,7 +459,7 @@ def filter_connections_receive_aware(
             for fid_u, fid_v in allowed:
                 for (u, v), meta in connections.items():
                     if node_fid.get(u)==fid_u and node_fid.get(v)==fid_v and node_jid.get(u)==j and node_jid.get(v)==j:
+                        # print(f"ACCEPT {u}->{v} with fids {fid_u}->{fid_v} at junc {j}")
                         accepted[(u, v)] = connections[(u, v)]
-                        break
-                print(f"Warning: missing connection {fid_u}->{fid_v} at junc {j}")
+
     return accepted

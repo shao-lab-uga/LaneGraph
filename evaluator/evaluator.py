@@ -1,15 +1,17 @@
-import numpy as np
 import json
-import networkx as nx
-from .utils import assign_edge_lengths, find_closest_nodes
-from .metrics.geotopo import Evaluator as GeoTopoEvaluator
-from .metrics.metrics import calc_sda, calc_iou, calc_apls
-from .metrics.metrics import nx_to_geo_topo_format
-from scipy.spatial.distance import cdist
-from scipy.interpolate import interp1d
 import random
 import warnings
+import numpy as np
+import networkx as nx
+from scipy.interpolate import interp1d
+from scipy.spatial.distance import cdist
+from evaluator.metrics.geotopo import Evaluator as GeoTopoEvaluator
 from evaluator.utils import prepare_graph_apls
+from evaluator.metrics.metrics import nx_to_geo_topo_format
+from evaluator.metrics.metrics import calc_sda, calc_iou, calc_apls
+from evaluator.utils import assign_edge_lengths, find_closest_nodes
+
+
 
 random.seed(0)
 
@@ -59,12 +61,12 @@ class GraphEvaluator():
         graph_gt_for_apls = prepare_graph_apls(graph_gt)
         graph_pred_for_apls = prepare_graph_apls(graph_pred)
 
-        # Try to calculate APLS metric
-        try:
-            apls = calc_apls(graph_gt_for_apls, graph_pred_for_apls)
-        except Exception as e:
-            apls = 0
-            warnings.warn("Error calculating APLS metric: {}.".format(e))
+        # # Try to calculate APLS metric
+        # try:
+        #     apls = calc_apls(graph_gt_for_apls, graph_pred_for_apls)
+        # except Exception as e:
+        #     apls = 0
+        #     warnings.warn("Error calculating APLS metric: {}.".format(e))
 
         # Try to calculate GEO and TOPO metrics
         try:
@@ -81,7 +83,7 @@ class GraphEvaluator():
 
         metrics_dict = {
             'iou': iou,
-            'apls': apls,
+            # 'apls': apls,
             'geo_precision': geo_precision,
             'geo_recall': geo_recall,
             'topo_precision': topo_precision,

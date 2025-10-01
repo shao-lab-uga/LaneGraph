@@ -1,4 +1,5 @@
 import os
+import re
 import cv2
 import torch
 import einops
@@ -143,7 +144,7 @@ class LaneGraphExtraction():
             m = (y < margin) | (y >= h - margin) | (x < margin) | (x >= w - margin)
             return m  # shape (H, W), dtype=bool
 
-        border_mask = margin_mask_bool(lane_predicted_image, margin=40)
+        border_mask = margin_mask_bool(lane_predicted_image, margin=20)
         lane_predicted_image[border_mask] = 0
         direction_predicted_image[border_mask] = 127
 
@@ -328,7 +329,7 @@ class LaneGraphExtraction():
         node_pairs = list(product(out_nodes, in_nodes))
         
         connections = {}
-        plt.figure(figsize=(10,10))
+        # plt.figure(figsize=(10,10))
         idx = 0
         for out_node_id, in_node_id in node_pairs:
             
@@ -354,11 +355,11 @@ class LaneGraphExtraction():
                 continue
             out_node_x, out_node_y = lane_graph.nodes[out_node_id].get("pos", (0, 0))
             in_node_x, in_node_y = lane_graph.nodes[in_node_id].get("pos", (0, 0))
-            plt.scatter(out_node_x, out_node_y, c='r', label='out' if idx == 0 else "")
-            plt.scatter(in_node_x, in_node_y, c='b', label='in' if idx == 0 else "")
-            if idx == 0:
-                idx += 1
-                plt.legend()
+            # plt.scatter(out_node_x, out_node_y, c='r', label='out' if idx == 0 else "")
+            # plt.scatter(in_node_x, in_node_y, c='b', label='in' if idx == 0 else "")
+            # if idx == 0:
+            #     idx += 1
+            #     plt.legend()
             
             between_nodes_distance = np.linalg.norm(np.array([out_node_x, out_node_y]) - np.array([in_node_x, in_node_y]))
             if between_nodes_distance > distance_threshold:
@@ -374,10 +375,10 @@ class LaneGraphExtraction():
             out_angle_rad = get_segment_average_angle(lane_graph, out_segment)
             in_angle_rad = get_segment_average_angle(lane_graph, in_segment)
             # print(f"Out node {out_node_id} angle: {np.degrees(out_angle_rad):.2f} degrees, In node {in_node_id} angle: {np.degrees(in_angle_rad):.2f} degrees")
-            starting_node_vector = np.array([np.cos(out_angle_rad), np.sin(out_angle_rad)])
-            ending_node_vector = np.array([np.cos(in_angle_rad), np.sin(in_angle_rad)])
-            dot_val = np.dot(starting_node_vector, ending_node_vector)
-            cross_val = np.cross(starting_node_vector, ending_node_vector)
+            starting_node_vector = np.array([np.cos(out_angle_rad), np.sin(out_angle_rad), 0.0])
+            ending_node_vector   = np.array([np.cos(in_angle_rad), np.sin(in_angle_rad), 0.0])
+            dot_val   = np.dot(starting_node_vector, ending_node_vector)
+            cross_val = np.cross(starting_node_vector, ending_node_vector)[-1]  # take z component
             
             connected = False
             turning = False
@@ -394,7 +395,7 @@ class LaneGraphExtraction():
             # print(f'cos angle: {np.rad2deg(np.arccos(topology_score)):.2f}, distance: {between_nodes_distance:.2f}, connected: {connected}, turning: {turning}')
             if connected:
                 if turning:
-                    intersection_point = intersection_of_extended_segments(lane_graph, out_segment, in_segment, length=200)
+                    intersection_point = intersection_of_extended_segments(lane_graph, out_segment, in_segment, length=300.0)
                     if intersection_point is None or intersection_point[0] < 0 or intersection_point[0] >= self.image_size or intersection_point[1] < 0 or intersection_point[1] >= self.image_size:
                         continue
                     p0_pos = (out_node_x, out_node_y)
@@ -406,10 +407,10 @@ class LaneGraphExtraction():
                         "connection_type": connection_type,
                         "points": [p0_pos, p1_pos, p2_pos, p3_pos]
                     }
-                    if connection_type == "left_turn":
-                        plt.plot([p0_pos[0], p1_pos[0], p2_pos[0], p3_pos[0]], [p0_pos[1], p1_pos[1], p2_pos[1], p3_pos[1]], c='r')
-                    else:
-                        plt.plot([p0_pos[0], p1_pos[0], p2_pos[0], p3_pos[0]], [p0_pos[1], p1_pos[1], p2_pos[1], p3_pos[1]], c='m')
+                    # if connection_type == "left_turn":
+                    #     plt.plot([p0_pos[0], p1_pos[0], p2_pos[0], p3_pos[0]], [p0_pos[1], p1_pos[1], p2_pos[1], p3_pos[1]], c='r')
+                    # else:
+                    #     plt.plot([p0_pos[0], p1_pos[0], p2_pos[0], p3_pos[0]], [p0_pos[1], p1_pos[1], p2_pos[1], p3_pos[1]], c='m')
                 else:
                     connection_type = "straight"
                     p0_pos = (out_node_x, out_node_y)
@@ -418,10 +419,10 @@ class LaneGraphExtraction():
                         "connection_type": connection_type,
                         "points": [p0_pos, p1_pos]
                     }
-                    plt.plot([out_node_x, in_node_x], [out_node_y, in_node_y], c='g')
+                    # plt.plot([out_node_x, in_node_x], [out_node_y, in_node_y], c='g')
                 
-        plt.title(f"Extracted Connections: {len(connections)}")
-        plt.savefig("extracted_connections.png")
+        # plt.title(f"Extracted Connections: {len(connections)}")
+        # plt.savefig("extracted_connections.png")
         return connections
     
     
@@ -498,7 +499,7 @@ class LaneGraphExtraction():
             # building the turning lane
             if connection_type in ["left_turn", "right_turn"]:
                 p0_pos, p1_pos, p2_pos, p3_pos = points
-                sampled_points = sample_bezier_curve(p0_pos, p1_pos, p2_pos, p3_pos, delta=20, oversample=10)
+                sampled_points = sample_bezier_curve(p0_pos, p1_pos, p2_pos, p3_pos, delta=25, oversample=10)
                 previous_node = out_node_id
                 for point in sampled_points[1:-1]:
                     x, y = int(point[0]), int(point[1])
@@ -532,7 +533,6 @@ class LaneGraphExtraction():
             geopath = []
             for node_id in path:
                 x, y = lane_graph.nodes[node_id].get("pos", (0, 0))
-                print(f"Node {node_id} pixel pos: ({x}, {y})")
                 mx = x0 + x * dx
                 my = y0 + y * dy
                 geopath.append((mx, my))
@@ -650,7 +650,7 @@ class LaneGraphExtraction():
         return gdf, lane_graph
 
 
-    def extract_lane_graph(self, input_satellite_image, output_path=None, mode='rule_based'):
+    def extract_lane_graph(self, input_satellite_image, output_path=None, image_name=None, mode='rule_based'):
         """
         Extracts lane graph from the satellite image.
         
@@ -666,34 +666,42 @@ class LaneGraphExtraction():
             image_name = os.path.basename(input_satellite_image).split('.')[0]
             input_satellite_image: np.ndarray = imageio.imread(input_satellite_image)
         elif isinstance(input_satellite_image, np.ndarray):
-            image_name = "input_image"
+            if image_name is None:
+                image_name = "inputa_image"
+            
         else:
             raise ValueError("input_satellite_image should be a file path or a numpy array.")
         
         # # Step 1: Lane and Direction Extraction
         lane_graph = self._extract_lane_and_direction(input_satellite_image, self.gpu_id)
-        lane_graph = refine_lane_graph(lane_graph, isolated_threshold=30, spur_threshold=10)
         lane_graph = annotate_node_types(lane_graph)
-        # lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=5.0)
-        
+        # lane_graph = connect_nearby_dead_ends(lane_graph, connection_threshold=50.0, topology_threshold=0.8)
+        # lane_graph = annotate_node_types(lane_graph)
+        lane_graph = refine_lane_graph(lane_graph, isolated_threshold=20, spur_threshold=10)
+        lane_graph = annotate_node_types(lane_graph)
         lane_graph = refine_lane_graph_with_curves(lane_graph)
         lane_graph = annotate_node_types(lane_graph)
         lane_graph_non_intersection = lane_graph.copy()
-        lane_prediced, direction_predicted = segmentation2graph.draw_inputs(lane_graph)
+        lane_predicted, direction_predicted = segmentation2graph.draw_inputs(lane_graph)
 
         if mode == 'rule_based':
             # assign the lane idx
             lanes_and_links_gdf, lane_graph_with_fids = self.extract_lanes_and_links_geojson(lane_graph,
                 origin=(0, 0),
                 resolution=(0.125, -0.125),
-                output_path='./',
+                output_path=None,
                 crs_proj=None
             )
             lanes_gdf = lanes_and_links_gdf[lanes_and_links_gdf['type'] == 'lane'].reset_index(drop=True)
             # get lane information (e.g., lane id, direction, road id)
-            
-            
-            lanes_gdf, reference_lines = self.extract_lane_info(lanes_gdf)
+
+
+            lanes_gdf, reference_lines, fids_to_remove = self.extract_lane_info(lanes_gdf)
+            # remove nodes and edges with fids_to_remove
+            lanes_gdf = lanes_gdf[~lanes_gdf['fid'].isin(fids_to_remove)].reset_index(drop=True)
+            reference_lines = {road_id: line for road_id, line in reference_lines.items() if road_id in lanes_gdf['road_id'].values}
+            lane_graph_with_fids.remove_nodes_from([n for n, d in lane_graph_with_fids.nodes(data=True) if d.get("fid") in fids_to_remove])
+            lane_graph_with_fids.remove_edges_from([ (u, v) for u, v, d in lane_graph_with_fids.edges(data=True) if d.get("fid") in fids_to_remove])
             # [ ] convert the geometry back to image coordinates
             lanes_gdf['geometry'] = lanes_gdf['geometry'].apply(lambda line: LineString([(x / 0.125, y / -0.125) for x, y in line.coords]))
             # also the reference lines
@@ -701,16 +709,18 @@ class LaneGraphExtraction():
             # get possible connections
             connections = self.extract_connections_rule_based(lane_graph_non_intersection, 
                                                               segment_max_length=5, 
-                                                              distance_threshold=350,
+                                                              distance_threshold=400,
                                                               turning_threshold=-0.8, 
                                                               topology_threshold=0.8)
-            print(f"Number of connections before filtering by lane templates: {len(connections)}")
+            # print(f"Number of connections before filtering by lane templates: {len(connections)}")
             
             connections_filtered = filter_connections_receive_aware(connections=connections, 
                                                                     lane_graph=lane_graph_with_fids, 
                                                                     lanes_gdf=lanes_gdf,
-                                                                    reference_lines=reference_lines)
-            print(f"Number of connections after filtering by lane templates: {len(connections_filtered)}")
+                                                                    reference_lines=reference_lines,
+                                                                    attach_tol=220.0
+                                                                    )
+            # print(f"Number of connections after filtering by lane templates: {len(connections_filtered)}")
             lane_graph_final = self._build_connecting_lanes(lane_graph, connections_filtered)
         elif mode == 'model_based':
             # Step 2: Reachable Lane Extraction
@@ -731,7 +741,9 @@ class LaneGraphExtraction():
         if output_path is not None:
             if not os.path.exists(output_path):
                 os.makedirs(output_path)
-                
+            # save the raw image
+            Image.fromarray(input_satellite_image.astype(np.uint8)).save(os.path.join(output_path, f"{image_name}_input.png"))
+            # save the lane graphs
             segmentation2graph.draw_directed_graph(lane_graph_non_intersection, save_path=output_path, image_name=f"non_intersection_{image_name}")
             segmentation2graph.draw_directed_graph(lane_graph_final, save_path=output_path, image_name=f"final_{image_name}")
             
@@ -786,12 +798,17 @@ class LaneGraphExtraction():
         lanes_gdf_grouped = infer_lane_directions_from_geometry(lanes_gdf_grouped)
         lanes_gdf, reference_lines = compute_reference_lines_direction_aware(lanes_gdf_grouped)
         lanes_gdf = assign_lane_ids_per_group(lanes_gdf, reference_lines)
-        
-        
-        return lanes_gdf, reference_lines
-        
-        
-    
+        fids_to_remove = []
+        for road_id, line in reference_lines.items():
+            # if only one lane for this road_id and the reference line is short, then consider removing it
+            lanes_in_road = lanes_gdf[lanes_gdf['road_id'] == road_id]
+            if len(lanes_in_road) == 1 and line.length < 20:
+                print(f"Warning: road_id {road_id} has only one lane and short reference line, consider removing it.")
+                fid = lanes_in_road.iloc[0]['fid']
+                fids_to_remove.append(fid)
+
+        return lanes_gdf, reference_lines, fids_to_remove
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="options")
     parser.add_argument("--config", type=str, default="configs/lane_graph_extraction_pipline.py", help="config file")
@@ -799,6 +816,6 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config, gpu_id=0)
-    input_satellite_img_path = "test_intersection.jpg"  # Path to the input satellite image
-    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="model_based",output_path='./')
-    
+    input_satellite_img_path = "test_non_intersection.jpg"  # Path to the input satellite image
+    # lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="rule_based",output_path='./')
+    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="rule_based",output_path=None)

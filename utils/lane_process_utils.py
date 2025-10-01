@@ -441,7 +441,7 @@ def infer_lane_directions_from_geometry(gdf_lanes, head_segment_length=3):
             lane_dir = 1 if abs(angle) < 90 else -1
 
             gdf_lanes.at[idx, "lane_dir"] = lane_dir
-            print(f"Road ID: {road_id}, Lane idx: {idx}, Angle: {angle:.2f}°, Direction: {lane_dir}")
+            # print(f"Road ID: {road_id}, Lane idx: {idx}, Angle: {angle:.2f}°, Direction: {lane_dir}")
 
     return gdf_lanes
 
@@ -502,7 +502,7 @@ def compute_reference_lines_direction_aware(lanes_gdf: gpd.GeoDataFrame, num_poi
         is_bidirectional = not lanes_pos.empty and not lanes_neg.empty
 
         if is_bidirectional:
-            print(f"Processing bidirectional road: {road_id}")
+            # print(f"Processing bidirectional road: {road_id}")
 
             def resample_and_align(geom, ref_coords):
                 coords = resample_line_points(geom, num_points)
@@ -562,7 +562,7 @@ def compute_reference_lines_direction_aware(lanes_gdf: gpd.GeoDataFrame, num_poi
             if average_lane_width:
                 lanes_gdf["lane_width"] = lanes_gdf.groupby("road_id")["lane_width"].transform("mean")
         else:
-            print(f"Processing one-directional road: {road_id}")
+            # print(f"Processing one-directional road: {road_id}")
             sampled_lines = []
             ref_coords = resample_line_points(group.iloc[0].geometry, num_points)
 
@@ -615,7 +615,7 @@ def compute_reference_lines_direction_aware(lanes_gdf: gpd.GeoDataFrame, num_poi
             offset_acc = 0.0
             # Shift to outer edge
             outermost = sorted_lanes.iloc[-1]
-            print(lanes_gdf.at[outermost["index"], "lane_width"])
+            # print(lanes_gdf.at[outermost["index"], "lane_width"])
             shift_amount = abs(lanes_gdf.at[outermost["index"], "avg_offset"]) + 0.5 * lanes_gdf.at[outermost["index"], "lane_width"]
             ref_line = shift_reference_line_to_outer_edge(center_line, shift_amount)
 
