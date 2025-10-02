@@ -12,13 +12,13 @@ dataset_config = load_config("configs/dataset.py")
 
 paths_config = dataset_config.paths
 data_attributes_config = dataset_config.data_attributes
-processed_data_path = paths_config.processed_data_path
+training_data_path = paths_config.training_data_path
+testing_data_path = paths_config.testing_data_path
 dataset_image_size = data_attributes_config.dataset_image_size
 input_image_size = data_attributes_config.input_image_size
 
 training_range = data_attributes_config.training_range
 testing_range = data_attributes_config.testing_range
-validation_range = data_attributes_config.validation_range
 # ============= Model Parameters =================
 
 # ============= Train Parameters =================
@@ -73,7 +73,7 @@ config = dict(
     dataset_config=dataset_config,
     dataloaders=dict(
         train=dict(
-            data_path=processed_data_path,
+            data_path=training_data_path,
             image_size=input_image_size,
             dataset_image_size=dataset_image_size,
             preload_tiles=preload_tiles,
@@ -82,7 +82,7 @@ config = dict(
             training=True,  # Indicates this is for training
         ),
         test=dict(
-            data_path=processed_data_path,
+            data_path=testing_data_path,
             image_size=input_image_size,
             dataset_image_size=dataset_image_size,
             preload_tiles=preload_tiles,
@@ -90,15 +90,7 @@ config = dict(
             indrange=testing_range,
             training=False,  # Indicates this is for testing
         ),
-        validate=dict(
-            data_path=processed_data_path,
-            image_size=input_image_size,
-            dataset_image_size=dataset_image_size,
-            preload_tiles=preload_tiles,
-            batch_size=batch_size,
-            indrange=validation_range,
-            training=False,  # Indicates this is for validation
-        ),
+
     ),
     models=dict(
         

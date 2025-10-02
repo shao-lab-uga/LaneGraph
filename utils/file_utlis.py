@@ -62,14 +62,17 @@ def extract_intersection_lat_lon_from_kml(kml_file, save_path=None) -> pd.DataFr
     latitudes_lst = []
     longitudes_lst = []
     for placemark in root.findall(".//kml:Placemark", ns):
-        point = placemark.find(".//kml:LookAt", ns)
-        if point is not None:
-            lon = point.find("kml:longitude", ns)
-            lat = point.find("kml:latitude", ns)
-            if lon is not None and lat is not None:
-                longitudes_lst.append(float(lon.text))
-                latitudes_lst.append(float(lat.text))
-    
+        coordinates = placemark.find('.//kml:Point/kml:coordinates', ns)
+        if coordinates is not None:
+            # Extract longitude and latitude
+            coord_text = coordinates.text.strip()
+            coord_parts = coord_text.split(',')
+            if len(coord_parts) >= 2:
+                longitude = coord_parts[0]
+                latitude = coord_parts[1]
+                # Write to file
+                latitudes_lst.append(float(latitude))
+                longitudes_lst.append(float(longitude))
 
     intersection_df['longitude'] = longitudes_lst
     intersection_df['latitude'] = latitudes_lst

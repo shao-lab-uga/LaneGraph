@@ -1,5 +1,6 @@
 import os
 import re
+from tkinter import NO
 import cv2
 import torch
 import einops
@@ -149,13 +150,13 @@ class LaneGraphExtraction():
         direction_predicted_image[border_mask] = 127
 
         
-        
+        Image.fromarray(lane_predicted_image.astype(np.uint8)).save(os.path.join(output_path, f"lane_predicted_{image_name}.jpg"))
         lane_predicted_image = scipy.ndimage.grey_closing(lane_predicted_image, size=(6,6))
         
         threshold = 64
         lane_predicted_image = lane_predicted_image >= threshold
-        Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save(os.path.join(output_path, f"direction_predicted_{image_name}"))
-        Image.fromarray(lane_predicted_image.astype(np.uint8)).save(os.path.join(output_path, f"lane_predicted_{image_name}"))
+        Image.fromarray(encode_direction_vectors_to_image(direction_predicted[0])).save(os.path.join(output_path, f"direction_predicted_{image_name}.jpg"))
+        
         lane_predicted_image = morphology.thin(lane_predicted_image)
         #
         lane_graph = segmentation2graph.extract_graph_from_image(lane_predicted_image)
@@ -667,10 +668,11 @@ class LaneGraphExtraction():
 
         if isinstance(input_satellite_image, str):
             image_name = os.path.basename(input_satellite_image).split('.')[0]
+            print(f"Reading image from {image_name}...")
             input_satellite_image: np.ndarray = imageio.imread(input_satellite_image)
         elif isinstance(input_satellite_image, np.ndarray):
             if image_name is None:
-                image_name = "inputa_image"
+                image_name = "input_image"
             
         else:
             raise ValueError("input_satellite_image should be a file path or a numpy array.")
@@ -682,8 +684,8 @@ class LaneGraphExtraction():
         lane_graph = annotate_node_types(lane_graph)
         lane_graph = refine_lane_graph(lane_graph, isolated_threshold=30, spur_threshold=10)
         lane_graph = annotate_node_types(lane_graph)
-        lane_graph = refine_lane_graph_with_curves(lane_graph)
-        lane_graph = annotate_node_types(lane_graph)
+        # lane_graph = refine_lane_graph_with_curves(lane_graph)
+        # lane_graph = annotate_node_types(lane_graph)
         lane_graph_non_intersection = lane_graph.copy()
         lane_predicted, direction_predicted = segmentation2graph.draw_inputs(lane_graph)
 
@@ -706,9 +708,7 @@ class LaneGraphExtraction():
             else:
                 lanes_gdf = lanes_and_links_gdf[lanes_and_links_gdf['type'] == 'lane'].reset_index(drop=True)
                 # get lane information (e.g., lane id, direction, road id)
-
-
-                lanes_gdf, reference_lines, fids_to_remove = self.extract_lane_info(lanes_gdf)
+                lanes_gdf, reference_lines, fids_to_remove = self.extract_lane_info(lanes_gdf, save_path=output_path)
                 # remove nodes and edges with fids_to_remove
                 lanes_gdf = lanes_gdf[~lanes_gdf['fid'].isin(fids_to_remove)].reset_index(drop=True)
                 reference_lines = {road_id: line for road_id, line in reference_lines.items() if road_id in lanes_gdf['road_id'].values}
@@ -785,7 +785,7 @@ class LaneGraphExtraction():
             segmentation2graph.visualize_lanes_and_links(lanes_and_links_gdf, save_path=output_path, image_name=f"lane_links")
         return lanes_and_links_gdf, lane_graph_with_fids
 
-    def extract_lane_info(self, lanes_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    def extract_lane_info(self, lanes_gdf: gpd.GeoDataFrame, save_path: str = None) -> gpd.GeoDataFrame:
         """
         Annotates road information to the lane graph based on the lanes GeoDataFrame.
 
@@ -806,7 +806,8 @@ class LaneGraphExtraction():
             min_overlap_ratio=0.2,# Min fraction of the shorter line that must overlap the longer one (0..1).
             pair_expand=6.0       # Search radius to gather candidate neighbors before detailed checks.
             )
-        # visualize_road_groups(lanes_gdf_grouped, label_col='road_id', save_path='./')
+        if save_path is not None:
+            visualize_road_groups(lanes_gdf_grouped, label_col='road_id', save_path=save_path)
         lanes_gdf_grouped = infer_lane_directions_from_geometry(lanes_gdf_grouped)
         lanes_gdf, reference_lines = compute_reference_lines_direction_aware(lanes_gdf_grouped)
         lanes_gdf = assign_lane_ids_per_group(lanes_gdf, reference_lines)
@@ -818,7 +819,7 @@ class LaneGraphExtraction():
                 print(f"Warning: road_id {road_id} has only one lane and short reference line, consider removing it.")
                 fid = lanes_in_road.iloc[0]['fid']
                 fids_to_remove.append(fid)
-
+        
         return lanes_gdf, reference_lines, fids_to_remove
 
 if __name__ == "__main__":
@@ -828,6 +829,6 @@ if __name__ == "__main__":
     # ============= Load Configuration =============
     config = load_config(args.config)
     lane_graph_extraction = LaneGraphExtraction(config, gpu_id=0)
-    input_satellite_img_path = "test_non_intersection.jpg"  # Path to the input satellite image
+    input_satellite_img_path = "test_intersection.jpg"  # Path to the input satellite image
     # lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="rule_based",output_path='./')
-    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="rule_based",output_path=None)
+    lane_graph_non_intersection, lane_graph_final = lane_graph_extraction.extract_lane_graph(input_satellite_img_path, mode="rule_based",output_path='./')

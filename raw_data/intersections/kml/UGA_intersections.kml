@@ -1,0 +1,520 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document id="1MtLQLSzdXXFNPvLqAXEb-qg7TRXJ5_W2">
+	<name>UGA_DT</name>
+	<gx:CascadingStyle kml:id="__managed_style_06B2F075923AD5AD572E">
+		<Style>
+			<IconStyle>
+				<scale>1.2</scale>
+				<Icon>
+					<href>https://earth.google.com/earth/document/icon?color=1976d2&amp;id=2000&amp;scale=4</href>
+				</Icon>
+				<hotSpot x="64" y="128" xunits="pixels" yunits="insetPixels"/>
+			</IconStyle>
+			<LabelStyle>
+			</LabelStyle>
+			<LineStyle>
+				<color>ff2dc0fb</color>
+				<width>6</width>
+			</LineStyle>
+			<PolyStyle>
+				<color>40ffffff</color>
+			</PolyStyle>
+			<BalloonStyle>
+			</BalloonStyle>
+		</Style>
+	</gx:CascadingStyle>
+	<gx:CascadingStyle kml:id="__managed_style_181D3977C43AD5AD572C">
+		<Style>
+			<IconStyle>
+				<Icon>
+					<href>https://earth.google.com/earth/document/icon?color=1976d2&amp;id=2000&amp;scale=4</href>
+				</Icon>
+				<hotSpot x="64" y="128" xunits="pixels" yunits="insetPixels"/>
+			</IconStyle>
+			<LabelStyle>
+			</LabelStyle>
+			<LineStyle>
+				<color>ff2dc0fb</color>
+				<width>4</width>
+			</LineStyle>
+			<PolyStyle>
+				<color>40ffffff</color>
+			</PolyStyle>
+			<BalloonStyle>
+			</BalloonStyle>
+		</Style>
+	</gx:CascadingStyle>
+	<StyleMap id="__managed_style_06C48EB7183AD5AD572C">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#__managed_style_181D3977C43AD5AD572C</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#__managed_style_06B2F075923AD5AD572E</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Placemark id="037CAC8BFD36A17E7AEB">
+		<name>Broad &amp; Lumpkin</name>
+		<LookAt>
+			<longitude>-83.37522411863846</longitude>
+			<latitude>33.95743589048837</latitude>
+			<altitude>1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>471.6594547565297</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37680690891141,33.95736108562451,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="085A5F8FCA36A17E9011">
+		<name>Broad &amp; College</name>
+		<LookAt>
+			<longitude>-83.37484455271746</longitude>
+			<latitude>33.95760694091137</latitude>
+			<altitude>-1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>471.6594548076957</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37524503960428,33.95769246523378,-7.073241992117119e-10</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="06BDBC1DC536A17EA991">
+		<name>Broad &amp; Jackson</name>
+		<LookAt>
+			<longitude>-83.37484455271746</longitude>
+			<latitude>33.95760694091137</latitude>
+			<altitude>-1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>471.6594548076957</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37429532066638,33.95792042439074,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="004D9DEBFA36A17EB41C">
+		<name>Broad &amp; Thomas</name>
+		<LookAt>
+			<longitude>-83.37484455271746</longitude>
+			<latitude>33.95760694091137</latitude>
+			<altitude>-1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>471.6594548076957</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37277633958307,33.95824278742322,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="088056C90836A17ECF57">
+		<name>Baldwin &amp; Lumpkin</name>
+		<LookAt>
+			<longitude>-83.37434831554542</longitude>
+			<latitude>33.95376197266688</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>500.4600026517381</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37652621426425,33.95297182480175,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0883C146BC36A17EE4A2">
+		<name>Baldwin &amp; Sanford</name>
+		<LookAt>
+			<longitude>-83.37434831554542</longitude>
+			<latitude>33.95376197266688</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>500.4600026517381</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37462238689045,33.95284302819142,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0B5D7101C236A17EF079">
+		<name>Baldwin &amp; Jackson</name>
+		<LookAt>
+			<longitude>-83.37434831554542</longitude>
+			<latitude>33.95376197266688</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>500.4600026517381</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37280474652302,33.95292592538414,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0092ECD2CF36A17EFFAD">
+		<name>Baldwin &amp; E Campus</name>
+		<LookAt>
+			<longitude>-83.37434831554542</longitude>
+			<latitude>33.95376197266688</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>500.4600026517381</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37150791713169,33.95302801678233,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="012F4E5BEB36A17F13E9">
+		<name>Wray &amp; Lumpkin</name>
+		<LookAt>
+			<longitude>-83.3761614455412</longitude>
+			<latitude>33.95551792201535</latitude>
+			<altitude>16.59452321014355</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>308.1068662072234</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37649016992125,33.95533187253112,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0C1144C42736A17F3DC1">
+		<name>Hooper &amp; E Campus</name>
+		<LookAt>
+			<longitude>-83.37257730428206</longitude>
+			<latitude>33.95207265074728</latitude>
+			<altitude>-1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>684.3391187881483</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37154024650827,33.95233422590402,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0B47D097A536A17F552A">
+		<name>Cedar &amp; Lumpkin</name>
+		<LookAt>
+			<longitude>-83.37565341513364</longitude>
+			<latitude>33.94758483653018</latitude>
+			<altitude>1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>684.3391190651143</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37810977474675,33.94746065776463,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="06C7AA440536A17F5FAB">
+		<name>Cedar &amp; Sanford</name>
+		<LookAt>
+			<longitude>-83.37565341513364</longitude>
+			<latitude>33.94758483653018</latitude>
+			<altitude>1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>684.3391190651143</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37646422013626,33.94756505145082,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0EF826024A36A17F7B72">
+		<name>Cedar &amp; E Campus</name>
+		<LookAt>
+			<longitude>-83.37162991573076</longitude>
+			<latitude>33.94592506331814</latitude>
+			<altitude>0</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>344.7655829072605</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37114602726811,33.94543742578094,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="020235C94736A17F9C26">
+		<name>Carlton &amp; Lumpkin</name>
+		<LookAt>
+			<longitude>-83.37807622232131</longitude>
+			<latitude>33.94504004675611</latitude>
+			<altitude>11.72432252254644</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>370.3400459822736</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37926232786712,33.94491252745787,-7.073241992117119e-10</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="019B854B1936A17FAB33">
+		<name>Carlton &amp; Sanford</name>
+		<LookAt>
+			<longitude>-83.37739845382423</longitude>
+			<latitude>33.94380306294767</latitude>
+			<altitude>1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>382.0643685251141</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37810558277172,33.94370923805408,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="05B0AA141736A17FC175">
+		<name>Carlton &amp; DW Brooks</name>
+		<LookAt>
+			<longitude>-83.37630822473514</longitude>
+			<latitude>33.9423536013219</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>382.0643685921468</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.3757818871802,33.94197918098156,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="07D3F2B94B36A17FD500">
+		<name>Carlton &amp; E Campus</name>
+		<LookAt>
+			<longitude>-83.3712532209392</longitude>
+			<latitude>33.94124129636205</latitude>
+			<altitude>0</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>382.0643686599466</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37174652434969,33.9409111101839,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="048267F5E336A17FE8CD">
+		<name>Green &amp; E Campus</name>
+		<LookAt>
+			<longitude>-83.37127816334582</longitude>
+			<latitude>33.94221761161948</latitude>
+			<altitude>0</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>512.0059416082539</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37102839314907,33.94200905570757,-1.414648398423424e-09</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="02204123E936A18048A4">
+		<name>Baxter &amp; Lumpkiin</name>
+		<LookAt>
+			<longitude>-83.37663801803039</longitude>
+			<latitude>33.95109472234767</latitude>
+			<altitude>1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>566.1946473789744</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37695017422809,33.95129242560063,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0E7625A98436A1805683">
+		<name>Tate &amp; Lumpkin</name>
+		<LookAt>
+			<longitude>-83.37663801803039</longitude>
+			<latitude>33.95109472234767</latitude>
+			<altitude>1.414648398423424e-09</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>566.1946473789744</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37725679001441,33.95028764920423,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0004914D0536A180AD3F">
+		<name>College Station &amp; E Campus</name>
+		<LookAt>
+			<longitude>-83.37312187857235</longitude>
+			<latitude>33.93556827583543</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>206.7988069307087</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37360275690804,33.93541331696246,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="03B7FB095536A180C76C">
+		<name>College Station &amp; Agriculture</name>
+		<LookAt>
+			<longitude>-83.37542375714409</longitude>
+			<latitude>33.93546628832003</latitude>
+			<altitude>7.595365624669396</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>256.8216083365903</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37615866189475,33.93515987922284,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0F1E9547D436A180DC36">
+		<name>College Station &amp; River</name>
+		<LookAt>
+			<longitude>-83.36996715445379</longitude>
+			<latitude>33.93524236875648</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>487.564845601172</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.37047736199348,33.93472527281344,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="09903B846636A180E67C">
+		<name>College Station &amp; 78 S</name>
+		<LookAt>
+			<longitude>-83.36996715445379</longitude>
+			<latitude>33.93524236875648</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>487.564845601172</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.36870533031421,33.93410953022978,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0708B820F436A1810672">
+		<name>College Station &amp; 78 N</name>
+		<LookAt>
+			<longitude>-83.36680356086899</longitude>
+			<latitude>33.93357583792084</latitude>
+			<altitude>0</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>403.8330564940745</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.36595925131996,33.93267115712671,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="01DE12271D36A1812962">
+		<name>College Station &amp; Riverbend</name>
+		<LookAt>
+			<longitude>-83.36472526330364</longitude>
+			<latitude>33.93216691008618</latitude>
+			<altitude>-7.073241992117119e-10</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>311.5820594142197</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<Point>
+			<coordinates>-83.36431867997726,33.93199042909112,0</coordinates>
+		</Point>
+	</Placemark>
+	<Placemark id="0D3C86EBFC38D416EC96">
+		<name>BoundingBox</name>
+		<LookAt>
+			<longitude>-83.38607698803338</longitude>
+			<latitude>33.95040869567902</latitude>
+			<altitude>239.5761167599058</altitude>
+			<heading>8.320390125719502</heading>
+			<tilt>2.150614012232405</tilt>
+			<gx:fovy>35</gx:fovy>
+			<range>6861.07894683606</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_06C48EB7183AD5AD572C</styleUrl>
+		<LineString>
+			<coordinates>
+				-83.37778996386636,33.95550971597078,0 -83.37832747178605,33.9570121333515,0 -83.37863225079352,33.95795725844073,0 -83.377072467913,33.9582973946726,0 -83.37151329700943,33.95955241617052,0 -83.37132108128721,33.95856024924967,0 -83.37104956207689,33.95772124176618,0 -83.369916250662,33.95323201551491,0 -83.36992686192761,33.95061274768428,0 -83.36968477134275,33.94257912451522,0 -83.37133720967157,33.93657261297751,0 -83.3661292779978,33.93827782532984,0 -83.36467149302784,33.93776853078302,0 -83.36488203103234,33.93314078808557,0 -83.36207697639638,33.93526600229442,0 -83.35989279052421,33.93265136727663,0 -83.36468480466614,33.9294485389005,0 -83.36832895014375,33.92874068652996,0 -83.37114784488443,33.92944276469096,0 -83.37067704652533,33.93334152754505,0 -83.37269306310841,33.93400931617744,0 -83.37576027598985,33.93277987584637,0 -83.37748493591558,33.93386258344488,0 -83.37754380585331,33.93510424385329,0 -83.37771800213521,33.9387988621326,0 -83.37827038526166,33.94186224517455,0 -83.38022113447865,33.94432488433361,0 -83.38148215716309,33.94545371855562,0 -83.37951823356735,33.9478129079238,0 -83.37856963692006,33.95144903324744,0 -83.37809530819774,33.95326709318071,0 -83.37767590050566,33.95514582904826,0 
+			</coordinates>
+		</LineString>
+	</Placemark>
+</Document>
+</kml>
