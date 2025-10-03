@@ -1,6 +1,4 @@
 import os
-import re
-from tkinter import NO
 import cv2
 import torch
 import einops
@@ -41,7 +39,8 @@ from utils.lane_process_utils import (get_junction_points,
                                       group_lanes_by_geometry,
                                       infer_lane_directions_from_geometry,
                                       compute_reference_lines_direction_aware,
-                                      assign_lane_ids_per_group
+                                      assign_lane_ids_per_group,
+                                      extract_lanes_and_links_with_fids
                                       )
 
 from utils.connection_filtering import filter_connections_receive_aware
@@ -518,140 +517,7 @@ class LaneGraphExtraction():
         return lane_graph
 
 
-    def extract_lanes_and_links_with_fids(
-        self,
-        lane_graph: nx.DiGraph,
-        origin=(0, 0), # left-top corner in meters
-        resolution=(0.125, 0.125),
-        output_path=None,
-        crs_proj: CRS = None,
-    ):
-        origin_x, origin_y = origin
-        origin_m = (origin_x, origin_y)
 
-        def pixel_to_geo(path, origin_m, resolution):
-            x0, y0 = origin_m
-            dx, dy = resolution
-            geopath = []
-            for node_id in path:
-                x, y = lane_graph.nodes[node_id].get("pos", (0, 0))
-                mx = x0 + x * dx
-                my = y0 + y * dy
-                geopath.append((mx, my))
-            return geopath
-        
-        rows = []
-        fid_counter = 0
-        node_to_fid = {}
-
-        valid_lane_combinations = {
-            ("in", "out"),
-            ("in", "split"),
-            ("split", "out"),
-            ("in", "merge"),
-            ("merge", "out"),
-        }
-        valid_link_combinations = {("out", "in")}
-        junction_types = {"in", "out", "split", "merge"}
-
-        def process_segment(path):
-            """Add one lane/link row from a node sequence."""
-            nonlocal fid_counter
-            if len(path) < 2:
-                return None
-
-            src, tgt = path[0], path[-1]
-            src_type = lane_graph.nodes[src].get("type")
-            tgt_type = lane_graph.nodes[tgt].get("type")
-
-            is_lane = (src_type, tgt_type) in valid_lane_combinations
-            is_link = (src_type, tgt_type) in valid_link_combinations
-            if not (is_lane or is_link):
-                return None
-
-            geo_path = pixel_to_geo(path, origin_m=origin_m, resolution=resolution)
-            geometry = LineString(geo_path)
-
-            fid = str(fid_counter)
-            fid_counter += 1
-
-            row = {
-                "fid": fid,
-                "type": "lane" if is_lane else "link",
-                "subtype": f"{src_type}->{tgt_type}",
-                "start_node_id": str(src),
-                "end_node_id": str(tgt),
-                "start_type": src_type,
-                "end_type": tgt_type,
-                "start_x": geo_path[0][0],
-                "start_y": geo_path[0][1],
-                "end_x": geo_path[-1][0],
-                "end_y": geo_path[-1][1],
-                "edge_nodes": str(path),
-                "geometry": geometry,
-                "from_fid": None,
-                "to_fid": None,
-            }
-
-            node_to_fid[(str(src), str(tgt))] = fid
-            rows.append(row)
-            return fid
-        # --- Traverse graph: build segments from junctions ---
-        for node, data in lane_graph.nodes(data=True):
-            if data.get("type") in {"in", "split", "merge"}:
-                for succ in lane_graph.successors(node):
-                    path = [node, succ]
-                    current = succ
-                    while (
-                        lane_graph.nodes[current].get("type") not in junction_types
-                        and lane_graph.out_degree(current) == 1
-                    ):
-                        nxt = next(lane_graph.successors(current))
-                        path.append(nxt)
-                        current = nxt
-                    
-                    fid = process_segment(path)
-                    if fid is not None:
-                        # assign fid to all edges and nodes in the segment
-                        for i in range(len(path) - 1):
-                            u, v = path[i], path[i + 1]
-                            lane_graph.edges[u, v]["fid"] = fid
-                        lane_graph.nodes[path[0]]["fid"] = fid
-                        lane_graph.nodes[path[-1]]["fid"] = fid
-
-
-        # --- Second pass: connect links <-> lanes ---
-        for row in rows:
-            if row["type"] == "link":
-                src, tgt = row["start_node_id"], row["end_node_id"]
-                for candidate in rows:
-                    if candidate["type"] == "lane":
-                        if candidate["end_node_id"] == src:
-                            row["from_fid"] = str(candidate["fid"])
-                        if candidate["start_node_id"] == tgt:
-                            row["to_fid"] = str(candidate["fid"])
-
-        for row in rows:
-            if row["type"] == "lane":
-                src, tgt = row["start_node_id"], row["end_node_id"]
-                for candidate in rows:
-                    if candidate["type"] == "link":
-                        if candidate["end_node_id"] == src:
-                            row["from_fid"] = str(candidate["fid"])
-                        if candidate["start_node_id"] == tgt:
-                            row["to_fid"] = str(candidate["fid"])
-        if len(rows) == 0:
-            print("Warning: No lanes or links extracted.")
-            return None, lane_graph
-        gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=crs_proj)
-        gdf.drop(
-            columns=["start_node_id", "end_node_id", "subtype", "edge_nodes", "start_x", "start_y", "end_x", "end_y"],
-            inplace=True,
-        )
-        if output_path is not None:
-            gdf.to_file(os.path.join(output_path, "lane_links.geojson"), driver="GeoJSON")
-
-        return gdf, lane_graph
 
 
     def extract_lane_graph(self, input_satellite_image, output_path=None, image_name=None, mode='rule_based'):
@@ -684,7 +550,7 @@ class LaneGraphExtraction():
         lane_graph = annotate_node_types(lane_graph)
         lane_graph = refine_lane_graph(lane_graph, isolated_threshold=30, spur_threshold=10)
         lane_graph = annotate_node_types(lane_graph)
-        # lane_graph = refine_lane_graph_with_curves(lane_graph)
+        lane_graph = refine_lane_graph_with_curves(lane_graph)
         # lane_graph = annotate_node_types(lane_graph)
         lane_graph_non_intersection = lane_graph.copy()
         lane_predicted, direction_predicted = segmentation2graph.draw_inputs(lane_graph)
@@ -775,7 +641,7 @@ class LaneGraphExtraction():
             crs_proj (CRS): Coordinate reference system for the output GeoDataFrame.
 
         """
-        lanes_and_links_gdf, lane_graph_with_fids = self.extract_lanes_and_links_with_fids(lane_graph,
+        lanes_and_links_gdf, lane_graph_with_fids = extract_lanes_and_links_with_fids(lane_graph,
             origin=origin,
             resolution=resolution,
             output_path=output_path,

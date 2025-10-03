@@ -46,7 +46,7 @@ def refine_lane_graph(
     lane_graph: nx.DiGraph,
     isolated_threshold: float = 150.0,
     spur_threshold: float = 60.0,
-    merge_threshold: float = 10.0,
+    merge_threshold: float = 5.0,
 ) -> nx.DiGraph:
     """
     Refine a lane graph by removing isolated components, short spurs,
@@ -269,7 +269,6 @@ def downsample_graph(
 def connect_nearby_dead_ends(
     lane_graph: nx.DiGraph,
     connection_threshold: float = 30.0,
-    topology_threshold: float = 0.8,
 ) -> nx.DiGraph:
     """
     Connect nearby 'out' nodes to 'in' nodes in a DiGraph to reduce fragmentation.
@@ -281,112 +280,25 @@ def connect_nearby_dead_ends(
     Returns:
         The modified graph with new edges added between close 'out' and 'in' nodes.
     """
-    out_nodes = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "out"]
-    in_nodes  = [n for n, d in lane_graph.nodes(data=True) if d.get("type") == "in"]
-
-    for out_node_id in out_nodes:
-        closest_in = None
-        dot_val = -1.0
+    dead_end_nodes = [n for n, d in lane_graph.nodes(data=True) if d.get("type") in {"in", "out"} and lane_graph.degree(n) == 1]
+    for node_1 in dead_end_nodes:
+        closest_node = None
         min_distance = connection_threshold
 
-        for in_node_id in in_nodes:
+        for node_2 in dead_end_nodes:
             # skip if already connected
-            if lane_graph.has_edge(out_node_id, in_node_id) or lane_graph.has_edge(in_node_id, out_node_id):
+            if lane_graph.has_edge(node_1, node_2) or lane_graph.has_edge(node_2, node_1) or node_1 == node_2:
                 continue
-            dist = _calculate_euclidean_distance(lane_graph.nodes[out_node_id], lane_graph.nodes[in_node_id])
-            # print(f"Distance from out {out_node_id} to in {in_node_id}: {dist:.1f}")
+            dist = _calculate_euclidean_distance(lane_graph.nodes[node_1], lane_graph.nodes[node_2])
             if dist < min_distance:
                 min_distance = dist
-                
-                out_segment = get_corresponding_lane_segment(lane_graph, out_node_id, segment_max_length=5)
-                in_segment = get_corresponding_lane_segment(lane_graph, in_node_id, segment_max_length=5)
-                out_angle_rad = get_segment_average_angle(lane_graph, out_segment)
-                in_angle_rad = get_segment_average_angle(lane_graph, in_segment)
-                
-                starting_node_vector = np.array([np.cos(out_angle_rad), np.sin(out_angle_rad)])
-                ending_node_vector = np.array([np.cos(in_angle_rad), np.sin(in_angle_rad)])
-                closest_in = in_node_id
-                dot_val = np.dot(starting_node_vector, ending_node_vector)
-        # Add directed edge if found
-        if closest_in is not None and dot_val > topology_threshold:
-            lane_graph.add_edge(out_node_id, closest_in)
+                closest_node = node_2
 
+        # Add directed edge if found
+        if closest_node is not None:
+            lane_graph.add_edge(node_1, closest_node)
     return lane_graph
 
-def refine_lane_graph_with_curves(
-    G_dir: nx.DiGraph,
-    simplify_epsilon: float = 2.0,
-) -> nx.DiGraph:
-    """
-    Refine a directed lane graph:
-    - Split subgraphs at split/merge nodes into lane segments
-    - Each segment = (junction/in) → ... → (junction/out)
-    - Simplify with Douglas-Peucker
-    - Preserve node attributes
-    - Use infer_majority_direction for consistent orientation
-    """
-    refined_graph = nx.DiGraph()
-    junction_nodes = {n for n, d in G_dir.nodes(data=True) if d.get("type") in {"split", "merge", "out"}}
-
-    def process_segment(segment):
-        """Simplify and insert segment into refined graph."""
-        if len(segment) < 2:
-            return
-        direction = infer_majority_direction(G_dir, segment)
-        simplified = douglas_peucker_int(segment, epsilon=simplify_epsilon)
-
-        for node in simplified:
-            if node not in refined_graph:
-                refined_graph.add_node(node, **G_dir.nodes[node])
-        for u, v in zip(simplified[:-1], simplified[1:]):
-            if direction == "forward":
-                refined_graph.add_edge(u, v)
-            else:
-                refined_graph.add_edge(v, u)
-
-    # Walk forward from every junction and "in" node
-    start_nodes = [n for n in G_dir.nodes if (n in junction_nodes or G_dir.nodes[n].get("type") == "in")]
-
-    for start in start_nodes:
-        for succ in G_dir.successors(start):
-            path = [start, succ]
-            current = succ
-            visited = {start, succ}  # Track visited nodes to prevent cycles
-            while current not in junction_nodes:
-                successors = list(G_dir.successors(current))
-                if not successors:
-                    break
-                nxt = successors[0]  # Take first successor
-                if nxt in visited:  # Cycle detected
-                    break
-                path.append(nxt)
-                visited.add(nxt)
-                current = nxt
-            if current != path[-1]:  # Only append if not already at the end
-                path.append(current)
-            process_segment(path)
-
-    return refined_graph
-
-
-
-def extract_ordered_path(G: nx.Graph) -> List[Tuple[int, int]]:
-    ends = [n for n in G.nodes if G.degree(n) == 1]
-    if not ends:
-        return list(nx.dfs_preorder_nodes(G, source=list(G.nodes)[0]))
-
-    max_path = []
-    for start in ends:
-        for end in ends:
-            if start == end:
-                continue
-            try:
-                path = nx.shortest_path(G, start, end)
-                if len(path) > len(max_path):
-                    max_path = path
-            except nx.NetworkXNoPath:
-                continue
-    return max_path
 
 
 def infer_majority_direction(
@@ -411,24 +323,140 @@ def infer_majority_direction(
     return 'forward' if forward_length >= reverse_length else 'reverse'
 
 
-def douglas_peucker_int(points: List[Tuple[int, int]], epsilon: float) -> List[Tuple[int, int]]:
-    if len(points) <= 2:
-        return points
+def refine_lane_graph_with_curves(
+    G_dir: nx.DiGraph,
+) -> nx.DiGraph:
+    """
+    Refine a directed lane graph:
+    - Split subgraphs at split/merge nodes into lane segments
+    - Each segment = (junction/in) → ... → (junction/out)
+    - Preserve node attributes
+    - Use infer_majority_direction for consistent orientation
+    """
+    refined_graph = nx.DiGraph()
+    junction_nodes = {n for n, d in G_dir.nodes(data=True) if d.get("type") in {"in", "split", "merge", "out"}}
 
-    max_dist = 0
-    index = 1
-    for i in range(1, len(points) - 1):
-        d = point_to_line_distance(points[i], points[0], points[-1])
-        if d > max_dist:
-            max_dist = d
-            index = i
 
-    if max_dist <= epsilon:
-        return [points[0], points[-1]]
+    def _copy_edge_attrs(u, v):
+        if G_dir.has_edge(u, v):
+            return G_dir.get_edge_data(u, v).copy()
+        if G_dir.has_edge(v, u):
+            return G_dir.get_edge_data(v, u).copy()
+        return {}
 
-    left = douglas_peucker_int(points[:index + 1], epsilon)
-    right = douglas_peucker_int(points[index:], epsilon)
-    return left[:-1] + right
+    def process_segment(segment):
+        """Simplify and insert segment into refined graph."""
+        if len(segment) < 2:
+            return
+
+        direction = infer_majority_direction(G_dir, segment)
+        ordered = segment if direction == "forward" else list(reversed(segment))
+
+        for node in ordered:
+            if node not in refined_graph:
+                refined_graph.add_node(node, **G_dir.nodes[node])
+        for u, v in zip(ordered[:-1], ordered[1:]):
+                if not refined_graph.has_edge(u, v):
+                    refined_graph.add_edge(u, v, **_copy_edge_attrs(u, v))
+
+
+
+    def _next_forward(cur, visited):
+        """Pick next node when walking forward:
+           Prefer a single unvisited successor; if none, use a single unvisited predecessor.
+           Continue only if the UNION of unvisited neighbors has size == 1."""
+        succs = [x for x in G_dir.successors(cur) if x not in visited]
+        preds = [x for x in G_dir.predecessors(cur) if x not in visited]
+        union = list(set(succs) | set(preds))
+        if len(union) == 1:
+            return union[0]
+        return None  # dead-end or branching/ambiguous
+
+    def _next_backward(cur, visited):
+        """Pick next node when walking backward:
+           Prefer a single unvisited predecessor; if none, use a single unvisited successor.
+           Continue only if the UNION of unvisited neighbors has size == 1."""
+        preds = [x for x in G_dir.predecessors(cur) if x not in visited]
+        succs = [x for x in G_dir.successors(cur) if x not in visited]
+        union = list(set(preds) | set(succs))
+        if len(union) == 1:
+            return union[0]
+        return None
+
+    # Walk forward from every "in" node.
+    start_nodes = [n for n in G_dir.nodes if (G_dir.nodes[n].get("type") == "in")]
+
+    for start in start_nodes:
+        # seed with an initial neighbor (prefer successors; fallback to predecessors)
+        first_candidates = list(G_dir.successors(start))
+        if not first_candidates:
+            first_candidates = list(G_dir.predecessors(start))
+        # If ambiguous at the seed, skip (junction start or noisy)
+        if len(set(first_candidates)) != 1:
+            continue
+
+        succ = first_candidates[0]
+        path = [start, succ]
+        current = succ
+        visited = {start, succ}  # Track visited nodes to prevent cycles
+
+        while current not in junction_nodes:
+            nxt = _next_forward(current, visited)
+            if nxt is None:
+                break
+            path.append(nxt)
+            visited.add(nxt)
+            current = nxt
+
+        process_segment(path)
+
+    # walk backward from every "out" node
+    end_nodes = [n for n in G_dir.nodes if (G_dir.nodes[n].get("type") == "out")]
+    for end in end_nodes:
+        # seed with an initial neighbor (prefer predecessors; fallback to successors)
+        first_candidates = list(G_dir.predecessors(end))
+        if not first_candidates:
+            first_candidates = list(G_dir.successors(end))
+        if len(set(first_candidates)) != 1:
+            continue
+
+        pred = first_candidates[0]
+        path = [end, pred]
+        current = pred
+        visited = {end, pred}
+
+        while current not in junction_nodes:
+            nxt = _next_backward(current, visited)
+            if nxt is None:
+                break
+            path.append(nxt)
+            visited.add(nxt)
+            current = nxt
+
+        path.reverse()  # Reverse to maintain direction from start to end
+        process_segment(path)
+
+    return refined_graph
+
+
+
+def extract_ordered_path(G: nx.Graph) -> List[Tuple[int, int]]:
+    ends = [n for n in G.nodes if G.degree(n) == 1]
+    if not ends:
+        return list(nx.dfs_preorder_nodes(G, source=list(G.nodes)[0]))
+
+    max_path = []
+    for start in ends:
+        for end in ends:
+            if start == end:
+                continue
+            try:
+                path = nx.shortest_path(G, start, end)
+                if len(path) > len(max_path):
+                    max_path = path
+            except nx.NetworkXNoPath:
+                continue
+    return max_path
 
 
 def point_to_line_distance(p, a, b):

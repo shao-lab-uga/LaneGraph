@@ -1,248 +1,386 @@
 
 import math
-from collections import defaultdict
-from re import T
-from typing import Dict, List, Tuple, Optional
-
 import numpy as np
 import pandas as pd
 import networkx as nx
+from collections import defaultdict, Counter
+from sklearn.cluster import DBSCAN, KMeans
 from shapely.geometry import LineString, Point
-from sklearn.cluster import DBSCAN
-from sympy import im
+from shapely.geometry.base import BaseGeometry
+from typing import Dict, List, Tuple, Optional
 from utils.graph_postprocessing_utils import point_distance
 
-# ============================================================
-# 0) Small geometry helpers
-# ============================================================
-def _angdiff(a: float, b: float) -> float:
-    d = (a - b + math.pi) % (2*math.pi) - math.pi
-    return abs(d)
 
-def _heading_along(geom: LineString, center: Point, approaching_junc: bool, d: float=2.0) -> Optional[float]:
-    """Heading (rad) near the junction side; toward_end=True means toward the line END (approach),
-       toward_end=False means away from the line START (departure)."""
-    L = float(geom.length)
-    if L <= 1e-6:
-        return None
-    flip = False
-    if approaching_junc:
-        if point_distance(geom.coords[0], center.coords[0]) < point_distance(geom.coords[-1], center.coords[0]):
-            flip = True  # reverse direction if start is closer to center
-    elif not approaching_junc:
-        if point_distance(geom.coords[-1], center.coords[0]) < point_distance(geom.coords[0], center.coords[0]):
-            flip = True  # reverse direction if end is closer to center
-    if not flip:
-        s0, s1 = max(0.0, L-d), L
-        a = np.asarray(geom.interpolate(s0).coords[0], float)
-        b = np.asarray(geom.interpolate(s1).coords[0], float)
+
+def _unit(v):
+    v = np.asarray(v, float); n = np.linalg.norm(v)
+    return (v / n) if n > 1e-9 else None
+
+def _geom_median(P, iters: int = 100, tol: float = 1e-6):
+    x = P.mean(axis=0)
+    for _ in range(iters):
+        d = np.linalg.norm(P - x, axis=1)
+        w = 1.0 / np.maximum(d, 1e-8)
+        x_new = (P * w[:, None]).sum(axis=0) / w.sum()
+        if np.linalg.norm(x_new - x) < tol: break
+        x = x_new
+    return x
+
+def _fit_hub_point(points: np.ndarray, dirs):
+    """
+    Least-squares point minimizing sum of squared perpendicular distances
+    to lines (x_i, v_i). Returns (p*, used) where used=#valid dirs.
+    """
+    I = np.eye(2)
+    A = np.zeros((2, 2)); b = np.zeros(2); used = 0
+    for x, v in zip(points, dirs):
+        v = _unit(v)
+        if v is None: continue
+        P = I - np.outer(v, v)   # projector onto normal space of v
+        A += P; b += P @ x; used += 1
+    if used >= 2 and np.linalg.cond(A) < 1e8:
+        p = np.linalg.solve(A, b)
+        return p, used
+    return points.mean(axis=0), 0
+
+def _project_point_to_line(x, v, p):
+    """Return the closest point to p on line through x with direction v."""
+    v = _unit(v)
+    if v is None: return x
+    t = np.dot(p - x, v)
+    return x + t * v
+
+def _center_from_lines(points: np.ndarray, dirs):
+    """
+    1) Fit hub by least squares
+    2) Project hub to each supporting line
+    3) Geometric median of projections (robust 'on-road' snap)
+    """
+    p_ls, used = _fit_hub_point(points, dirs)
+    if used < 2:
+        return _geom_median(points)
+    projs = np.vstack([_project_point_to_line(x, v, p_ls) for x, v in zip(points, dirs)])
+    return _geom_median(projs)
+
+def _estimate_dir_from_graph(G, n, pos):
+    """Average unit vectors to successors for 'out', predecessors for 'in'."""
+    t = G.nodes[n].get('type')
+    vecs = []
+    if t == 'in':
+        for p in G.predecessors(n):
+            if p in pos:
+                u = _unit(np.asarray(pos[n], float) - np.asarray(pos[p], float))
+                if u is not None: vecs.append(u)
     else:
-        s1, s0 = min(d, L), 0.0
-        a = np.asarray(geom.interpolate(s1).coords[0], float)
-        b = np.asarray(geom.interpolate(s0).coords[0], float)
-    v = b - a
-    if np.allclose(v, 0.0):
+        for s in G.successors(n):
+            if s in pos:
+                u = _unit(np.asarray(pos[s], float) - np.asarray(pos[n], float))
+                if u is not None: vecs.append(u)
+    if not vecs: return None
+    return _unit(np.mean(vecs, axis=0))
+
+def _tangent_from_geom(geom: BaseGeometry, near_xy: np.ndarray):
+    """Tangent from lane geometry near the endpoint (if you have geometry)."""
+    try:
+        s = geom.project(Point(float(near_xy[0]), float(near_xy[1])))
+        ds = max(geom.length * 1e-4, 0.5)
+        p1 = np.array(list(geom.interpolate(max(0.0, s-ds)).coords)[0])
+        p2 = np.array(list(geom.interpolate(min(geom.length, s+ds)).coords)[0])
+        return _unit(p2 - p1)
+    except Exception:
         return None
-    return math.atan2(v[1], v[0])
 
+def _geom_median(P: np.ndarray, iters: int = 100, tol: float = 1e-6) -> np.ndarray:
+    x = P.mean(axis=0)
+    for _ in range(iters):
+        d = np.linalg.norm(P - x, axis=1)
+        w = 1.0 / np.maximum(d, 1e-8)
+        x_new = (P * w[:, None]).sum(axis=0) / w.sum()
+        if np.linalg.norm(x_new - x) < tol:
+            break
+        x = x_new
+    return x
 
+def _diameter(P: np.ndarray) -> float:
+    if len(P) <= 1: return 0.0
+    c = P.mean(axis=0)
+    return float(np.linalg.norm(P - c, axis=1).max() * 2.0)
+
+def _split_until_small(
+    XY: np.ndarray, idxs: List[int],
+    *, max_diam: float, max_endpoints: int, min_sz: int = 4
+) -> List[List[int]]:
+    """
+    Recursively split (k=2) while cluster is too big in size or span.
+    Accept split only if both children are meaningfully tighter or reduce size.
+    """
+    P = XY[idxs]
+    D = _diameter(P)
+    if (len(idxs) <= max_endpoints and D <= max_diam) or len(idxs) < 2*min_sz:
+        return [idxs]
+
+    km = KMeans(n_clusters=2, n_init=10, random_state=0).fit(P)
+    lab = km.labels_
+    g0 = [idxs[i] for i in range(len(P)) if lab[i] == 0]
+    g1 = [idxs[i] for i in range(len(P)) if lab[i] == 1]
+    if len(g0) < min_sz or len(g1) < min_sz:
+        return [idxs]
+
+    P0, P1 = P[lab == 0], P[lab == 1]
+    D0, D1 = _diameter(P0), _diameter(P1)
+
+    # accept if we either reduce oversize OR shrink diameter well
+    size_ok = (len(g0) <= max_endpoints and len(g1) <= max_endpoints)
+    diam_ok = max(D0, D1) <= 0.9 * D
+    if not (size_ok or diam_ok):
+        return [idxs]
+
+    out = []
+    out.extend(_split_until_small(XY, g0, max_diam=max_diam, max_endpoints=max_endpoints, min_sz=min_sz))
+    out.extend(_split_until_small(XY, g1, max_diam=max_diam, max_endpoints=max_endpoints, min_sz=min_sz))
+    return out
 
 def cluster_intersections_by_roads(
     lane_graph: nx.DiGraph,
-    lanes_gdf,                       # pandas.DataFrame with at least ['fid','road_id']
+    lanes_gdf,                       # DataFrame with ['fid','road_id']
     *,
-    eps: float = 12.0,               # spatial radius (your units)
-    min_samples: int = 1,            # DBSCAN core size (1 is fine here)
-    min_roads: int = 2,              # REQUIRE at least this many DISTINCT roads per cluster
-    merge_tol: float = 10.0          # merge nearby clusters (center-to-center) if they are the same intersection
-)-> Dict[int, Point]:
-    """
-    Cluster ONLY 'in'/'out' nodes; keep a cluster as an intersection iff it contains nodes
-    from >= min_roads DISTINCT road_ids (using node->fid->road_id). Assign contiguous junc_id
-    only to nodes in KEPT clusters. Returns {junc_id: Point} medoid centers.
-    """
-    # Node attrs
+    eps: float = 220.0,              # your existing scale
+    min_samples: int = 4,
+    max_diam: float = 450.0,         # cap spatial spread (adjust to your map units)
+    max_endpoints: int = 20,         # NEW: hard cap on endpoints per junction (your idea)
+    min_roads: int = 2,
+    require_io_mix: bool = True,
+    per_road_cap: int = 8            # optional: cap endpoints contributed by any single road
+) -> Dict[int, Point]:
+
     pos = nx.get_node_attributes(lane_graph, 'pos')
     typ = nx.get_node_attributes(lane_graph, 'type')
     fid = nx.get_node_attributes(lane_graph, 'fid')
 
-    # Map fid -> road_id
     fid2road = dict(zip(lanes_gdf['fid'].tolist(), lanes_gdf['road_id'].tolist()))
 
-    # Collect only 'in'/'out' nodes with positions and known road_ids
-    io_nodes, XY, roads = [], [], []
+    nodes, XY, roads, io_types = [], [], [], []
     for n, t in typ.items():
         if t in ('in', 'out') and (n in pos):
             r = fid2road.get(fid.get(n))
             if r is None:
                 continue
-            io_nodes.append(n)
-            XY.append(pos[n])
+            nodes.append(n)
+            XY.append(np.asarray(pos[n], float))
             roads.append(r)
-    if not io_nodes:
+            io_types.append(t)
+
+    if not nodes:
         return {}
 
     XY = np.asarray(XY, float)
     labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(XY)
 
-    # Build raw clusters: nodes, road sets
-    clusters = {}
-    for node, lab, xy, rd in zip(io_nodes, labels, XY, roads):
-        lab = int(lab)
-        if lab not in clusters:
-            clusters[lab] = {'nodes': [], 'xy': [], 'roads': set()}
-        clusters[lab]['nodes'].append(node)
-        clusters[lab]['xy'].append(xy)
-        clusters[lab]['roads'].add(rd)
+    # initial groups (ignore noise = -1)
+    groups = {}
+    for i, lab in enumerate(labels):
+        if lab == -1:
+            continue
+        groups.setdefault(int(lab), []).append(i)
 
-    # Compute medoid per raw cluster
-    for c in clusters.values():
-        P = np.vstack(c['xy'])
-        D = np.linalg.norm(P[:, None, :] - P[None, :, :], axis=2).sum(axis=1)
-        c['center'] = P[int(np.argmin(D))]
+    # auto-split oversized groups by size/diameter
+    final_groups = []
+    for _, idxs in groups.items():
+        final_groups.extend(_split_until_small(XY, idxs, max_diam=max_diam, max_endpoints=max_endpoints, min_sz=4))
 
-    # (Optional) merge raw clusters that are actually the same intersection (close centers)
-    # Union-Find style merge by proximity
-    raw_ids = list(clusters.keys())
-    parent = {i: i for i in raw_ids}
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-    def union(a, b):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    for i in range(len(raw_ids)):
-        for j in range(i+1, len(raw_ids)):
-            ci, cj = clusters[raw_ids[i]], clusters[raw_ids[j]]
-            if np.linalg.norm(ci['center'] - cj['center']) <= merge_tol:
-                union(raw_ids[i], raw_ids[j])
-
-    merged = {}
-    for k in raw_ids:
-        r = find(k)
-        if r not in merged:
-            merged[r] = {'nodes': [], 'xy': [], 'roads': set()}
-        merged[r]['nodes'].extend(clusters[k]['nodes'])
-        merged[r]['xy'].extend(clusters[k]['xy'])
-        merged[r]['roads'] |= clusters[k]['roads']
-
-    # Recompute centers after merge
-    for m in merged.values():
-        P = np.vstack(m['xy'])
-        D = np.linalg.norm(P[:, None, :] - P[None, :, :], axis=2).sum(axis=1)
-        m['center'] = P[int(np.argmin(D))]
-
-    # Filter: keep only clusters with >= min_roads distinct road_ids
-    kept = [m for m in merged.values() if len(m['roads']) >= min_roads]
-
-    # Assign contiguous junc_id to KEPT nodes; clear any previous junc_id
+    # structural filters + optional per-road cap
     for n in lane_graph.nodes:
-        if 'junc_id' in lane_graph.nodes[n]:
-            del lane_graph.nodes[n]['junc_id']
+        lane_graph.nodes[n].pop('junc_id', None)
+
+    kept = []
+    for g in final_groups:
+        # enforce per-road cap to avoid one corridor dominating a plaza
+        if per_road_cap is not None and per_road_cap > 0:
+            cnt = Counter(roads[i] for i in g)
+            # if any road contributes too many endpoints, softly trim by nearest to group center later
+            if any(v > per_road_cap for v in cnt.values()):
+                # compute provisional center for trimming
+                c0 = _geom_median(XY[g])
+                d = {i: np.linalg.norm(XY[i] - c0) for i in g}
+                g_sorted = sorted(g, key=lambda i: d[i])
+                # keep up to per_road_cap per road, closest first
+                seen = Counter()
+                trimmed = []
+                for i in g_sorted:
+                    rd = roads[i]
+                    if seen[rd] < per_road_cap:
+                        trimmed.append(i); seen[rd] += 1
+                g = trimmed
+
+        rset = set(roads[i] for i in g)
+        if len(rset) < min_roads:
+            continue
+        if require_io_mix:
+            tlist = [io_types[i] for i in g]
+            if not (('in' in tlist) and ('out' in tlist)):
+                continue
+        kept.append(g)
 
     centers = {}
-    for new_id, c in enumerate(kept):
-        for n in c['nodes']:
-            lane_graph.nodes[n]['junc_id'] = int(new_id)
-        centers[int(new_id)] = Point(float(c['center'][0]), float(c['center'][1]))
+    for junc_id, g in enumerate(kept):
+        pos = nx.get_node_attributes(lane_graph, 'pos')
+        fid = nx.get_node_attributes(lane_graph, 'fid')
 
+        # optional: if you have lanes_gdf.geometry
+        fid2geom = {}
+        if 'geometry' in lanes_gdf.columns:
+            fid2geom = dict(zip(lanes_gdf['fid'].tolist(), lanes_gdf['geometry'].tolist()))
+
+        pts = XY[g]
+        dirs = []
+        for i in g:
+            n = nodes[i]
+            d = None
+            # try lane geometry tangent first (more stable), then graph neighbors
+            if fid2geom:
+                f = fid.get(n, None)
+                geom = fid2geom.get(f, None)
+                if geom is not None:
+                    d = _tangent_from_geom(geom, np.asarray(pos[n], float))
+            if d is None:
+                d = _estimate_dir_from_graph(lane_graph, n, pos)
+            dirs.append(d)
+
+        c = _center_from_lines(pts, dirs)
+        for i in g:
+            lane_graph.nodes[nodes[i]]['junc_id'] = int(junc_id)
+        centers[int(junc_id)] = Point(float(c[0]), float(c[1]))
     return centers
 
+
+def _angdiff(a: float, b: float) -> float:
+    d = (a - b + math.pi) % (2*math.pi) - math.pi
+    return abs(d)
+
+def _heading_along(geom: LineString, center: Point, approaching_junc: bool, d: float = 2.0) -> Optional[float]:
+    """
+    Heading (rad) at the lane's segment near the junction side.
+    - If approaching_junc=True: use the segment that points TOWARD the junction end.
+    - If approaching_junc=False: use the segment that points AWAY from the junction end.
+    """
+    L = float(geom.length)
+    if L <= 1e-6:
+        return None
+
+    p0 = np.asarray(geom.coords[0], float)
+    p1 = np.asarray(geom.coords[-1], float)
+    jc = np.asarray(center.coords[0], float)
+
+    # Which end is nearer to the junction center?
+    start_is_junc_end = np.linalg.norm(p0 - jc) <= np.linalg.norm(p1 - jc)
+
+    if approaching_junc:
+        # we want the vector that heads into the junction end
+        if start_is_junc_end:
+            s0, s1 = min(d, L), 0.0      # segment pointing toward start
+        else:
+            s0, s1 = max(0.0, L - d), L  # segment pointing toward end
+    else:
+        # departing: vector pointing away from the junction end
+        if start_is_junc_end:
+            s0, s1 = 0.0, min(d, L)      # away from start
+        else:
+            s0, s1 = L, max(0.0, L - d)  # away from end
+
+    a = np.asarray(geom.interpolate(s0).coords[0], float)
+    b = np.asarray(geom.interpolate(s1).coords[0], float)
+    v = b - a
+    if np.allclose(v, 0.0):
+        return None
+    return math.atan2(v[1], v[0])
 # ============================================================
 # 3) Attach lanes to junctions and build directed legs
 # ============================================================
-def _lane_endpoints(row: pd.Series) -> Tuple[np.ndarray, np.ndarray]:
-    geom: LineString = row.geometry
-    return np.asarray(geom.coords[0], float), np.asarray(geom.coords[-1], float)
 
 def build_directed_legs_per_junction(
     lanes_gdf: pd.DataFrame,
     reference_lines: Dict[int, LineString],
-    lane_graph: nx.DiGraph,
     junction_centers: Dict[int, Point],
     *,
-    attach_tol: float=200.0,
+    attach_tol: float = 200.0,
 ):
     """
-    Create directed legs per junc_id:
-      - approaches[(road_id, lane_dir, j)] : lanes ending at j (end_type=='in'), ordered driver-left→right
-      - departures[(road_id, lane_dir, j)]: lanes starting at j (start_type=='out'), ordered driver-left→right
-    Also compute an average heading (toward end for approaches; from start for departures).
+    Create directed legs per junction. Each reference line end (start/end)
+    can attach to a DIFFERENT junction.
     """
     def _nearest_j(pt: np.ndarray, junction_centers: Dict[int, Point]):
         if not junction_centers:
             return None, None
         d = {k: point_distance(pt, np.asarray(c.coords[0], float)) for k, c in junction_centers.items()}
         k = min(d, key=d.get)
-        
         return k, d[k]
 
     approaches_raw, departures_raw = defaultdict(list), defaultdict(list)
-    approaches_raw_key_set, departures_raw_key_set = set(), set()
 
     for road_id, reference_line in reference_lines.items():
-
         ref_start_pos = np.asarray(reference_line.coords[0], float)
         ref_end_pos   = np.asarray(reference_line.coords[-1], float)
 
-        junction_id_start, junction_dist_start = _nearest_j(ref_start_pos, junction_centers)
-        junction_id_end,   junction_dist_end   = _nearest_j(ref_end_pos, junction_centers)
-        # print(f"  -> reference line {road_id} starts at {junction_id_start} ({junction_dist_start}) and ends at {junction_id_end} ({junction_dist_end})")
-        # choose the closer junction node between start and end
-        ## if the end node is closer to the junction then its an approach
-        
-        if (junction_dist_end is None and junction_dist_start is None) or ((junction_dist_end > attach_tol) and (junction_dist_start > attach_tol)):
-            continue  # too far from any junction
-        
-        
-        if junction_dist_end is not None and (junction_dist_start is None or junction_dist_end
-            <= junction_dist_start) and junction_dist_end <= attach_tol:
-            j = junction_id_end
-            lanes_same_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==1)]
+        j_start, d_start = _nearest_j(ref_start_pos, junction_centers)
+        j_end,   d_end   = _nearest_j(ref_end_pos,   junction_centers)
 
-            for _, r in lanes_same_direction.iterrows():
-                approaches_raw[(road_id, 1, j)].append(r)
-                approaches_raw_key_set.add((road_id, 1, j))
-                
-            lanes_opposite_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==-1)]
-            for _, r in lanes_opposite_direction.iterrows():
-                departures_raw[(road_id, -1, j)].append(r)
-                departures_raw_key_set.add((road_id, -1, j))
-        ## if the start node is closer to the junction then its a departure
-        elif junction_dist_start is not None and (junction_dist_end is None or junction_dist_start
-            < junction_dist_end) and junction_dist_start <= attach_tol:
-            j = junction_id_start
-            lanes_same_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==1)]
-            for _, r in lanes_same_direction.iterrows():
-                departures_raw[(road_id, 1, j)].append(r)
-                departures_raw_key_set.add((road_id, 1, j))
-            
-            lanes_opposite_direction = lanes_gdf.loc[(lanes_gdf['road_id']==road_id) & (lanes_gdf['lane_dir']==-1)]
-            for _, r in lanes_opposite_direction.iterrows():
-                approaches_raw[(road_id, -1, j)].append(r)
-                approaches_raw_key_set.add((road_id, -1, j))
+        # nothing close to any junction → skip this road_id
+        if ((d_start is None or d_start > attach_tol) and
+            (d_end   is None or d_end   > attach_tol)):
+            continue
+
+        # pull lanes for this road once
+        lanes_fwd = lanes_gdf.loc[(lanes_gdf['road_id'] == road_id) & (lanes_gdf['lane_dir'] == 1)]
+        lanes_rev = lanes_gdf.loc[(lanes_gdf['road_id'] == road_id) & (lanes_gdf['lane_dir'] == -1)]
+
+        # Attach START end (if close enough)
+        if (d_start is not None) and (d_start <= attach_tol):
+            # At the START junction:
+            #   lane_dir=+1: DEPARTURE from start (moving away from start)
+            #   lane_dir=-1: APPROACH to start (moving toward start)
+            for _, r in lanes_fwd.iterrows():
+                departures_raw[(road_id,  1, j_start)].append(r)
+            for _, r in lanes_rev.iterrows():
+                approaches_raw[(road_id, -1, j_start)].append(r)
+
+        # Attach END end (if close enough)
+        if (d_end is not None) and (d_end <= attach_tol):
+            # At the END junction:
+            #   lane_dir=+1: APPROACH to end (moving toward end)
+            #   lane_dir=-1: DEPARTURE from end (moving away from end)
+            for _, r in lanes_fwd.iterrows():
+                approaches_raw[(road_id,  1, j_end)].append(r)
+            for _, r in lanes_rev.iterrows():
+                departures_raw[(road_id, -1, j_end)].append(r)
+
+        # Note: if both ends connect to the SAME junction, both blocks will run;
+        # that’s correct: same lanes serve as approaches from one side and
+        # departures from the other w.r.t. the same junc_id.
 
     def _pack(buckets, approaching_junc: bool):
         legs = {}
         for key, rows in buckets.items():
             road_id, lane_dir, junction_id = key
             df = pd.DataFrame(rows).reset_index(drop=True)
-            # average heading at the junction side
-            hs = [h for h in (_heading_along(g, center=junction_centers[junction_id], approaching_junc=approaching_junc) for g in df['geometry']) if h is not None]
-            H  = math.atan2(np.mean(np.sin(hs)), np.mean(np.cos(hs))) if hs else None
-            df['avg_offset'] = df['avg_offset'].abs()  # use absolute offsets for ordering
+
+            # average heading near the junction side
+            hs = [
+                h for h in (
+                    _heading_along(g, center=junction_centers[junction_id], approaching_junc=approaching_junc)
+                    for g in df['geometry']
+                ) if h is not None
+            ]
+            H = math.atan2(np.mean(np.sin(hs)), np.mean(np.cos(hs))) if hs else None
+
+            # order lanes by absolute lateral offset (driver-left → right if you defined it that way)
+            df['avg_offset'] = df['avg_offset'].abs()
             df = df.sort_values('avg_offset', ascending=True).reset_index(drop=True)
-            fids = df['fid'].tolist()
-            # order lanes by offset (driver-left→right)
-            legs[key] = {'heading': H, 'fids': fids, 'df': df}
+
+            legs[key] = {'heading': H, 'fids': df['fid'].tolist(), 'df': df}
         return legs
 
-    legs_in  = _pack(approaches_raw, approaching_junc=True)   # approaching junc
-    legs_out = _pack(departures_raw, approaching_junc=False)  # leaving junc
+    legs_in  = _pack(approaches_raw, approaching_junc=True)    # approaches at each junc
+    legs_out = _pack(departures_raw, approaching_junc=False)   # departures at each junc
     return legs_in, legs_out
 
 

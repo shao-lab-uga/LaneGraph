@@ -1,5 +1,8 @@
 
+import os
 import numpy as np
+import networkx as nx
+from pyproj import CRS
 import geopandas as gpd
 from typing import Dict
 from collections import defaultdict
@@ -63,6 +66,81 @@ def resample_line_points(geom:LineString, num_points=50):
         for i in range(num_points)
     ])
 
+
+def resample_line_spacing(line: LineString, spacing: float = 0.5) -> LineString:
+    """
+    Resample a LineString at ~uniform spacing along arc length.
+    Keeps endpoints and inserts intermediate points every `spacing`.
+    """
+    L = line.length
+    if L < spacing:
+        return line
+    n = int(L // spacing) + 2
+    return LineString([line.interpolate(d) for d in np.linspace(0, L, n)])
+
+
+def _heading_at(line: LineString, d: float, delta: float) -> np.ndarray:
+    """Unit tangent at arc-length position d using a central difference of ±delta."""
+    L = line.length
+    if L <= 1e-9:
+        return None
+    d0 = max(0.0, d - delta)
+    d1 = min(L, d + delta)
+    if d1 <= d0:
+        return None
+    p0 = np.array(line.interpolate(d0).coords[0], dtype=float)
+    p1 = np.array(line.interpolate(d1).coords[0], dtype=float)
+    v = p1 - p0
+    n = np.linalg.norm(v)
+    if n <= 1e-12:
+        return None
+    return v / n
+
+def _avg_heading_diff_deg_lines(
+    line1: LineString,
+    line2: LineString,
+    *,
+    spacing: float = 1.0,
+    delta_frac: float = 0.05,
+    flip_second: bool = False,
+) -> float:
+    """
+    Average |heading difference| (degrees) sampled along arclength.
+    If flip_second=True, reverse line2 before comparison.
+    Samples are matched by normalized arc length (0..1) on each line.
+    """
+    if flip_second:
+        line2 = _reverse_ls(line2)
+
+    L1 = line1.length
+    L2 = line2.length
+    if L1 < 1e-9 or L2 < 1e-9:
+        return 180.0
+
+    # number of interior samples (avoid endpoints for stable tangents)
+    n = max(int(min(L1, L2) // max(spacing, 1e-3)) + 2, 5)
+    # tangent step
+    delta = max(delta_frac * min(L1, L2), 1e-3)
+
+    angles = []
+    for i in range(1, n - 1):  # skip endpoints
+        t = i / (n - 1)  # 0..1
+        d1 = t * L1
+        d2 = t * L2
+        v1 = _heading_at(line1, d1, delta)
+        v2 = _heading_at(line2, d2, delta)
+        if v1 is None or v2 is None:
+            continue
+        c = np.clip(float(np.dot(v1, v2)), -1.0, 1.0)
+        ang = float(np.degrees(np.arccos(c)))  # 0..180
+        angles.append(ang)
+
+    if not angles:
+        # fallback to global direction estimate if local tangents failed
+        v1 = _dir_vec(line1); v2 = _dir_vec(line2)
+        return _angle_deg_between(v1, v2)
+
+    return float(np.mean(angles))
 
 def _reverse_ls(ls: LineString) -> LineString:
     """Return the reversed polyline (endpoints swapped)."""
@@ -152,6 +230,7 @@ def lines_are_groupable(
     angle_tol_deg: float = 25.0,     # max heading difference to be "same direction"
     serial_reject_tol: float = 2.0,  # reject same-direction head↔tail proximity (serial join)
     min_overlap_ratio: float = 0.0,  # optional along-track overlap requirement (0..1)
+    angle_avg_tol_deg: float = 20.0, # <-- NEW: mean heading difference threshold
 ) -> bool:
     """
     Decide if two lane centerlines should be grouped as adjacent segments in the same corridor.
@@ -191,7 +270,14 @@ def lines_are_groupable(
         # Opposite-direction adjacency: start~end or end~start should be close.
         if min(d_s_e, d_e_s) > endpoint_tol:
             return False
-
+    avg_ang = _avg_heading_diff_deg_lines(
+        line1, line2,
+        spacing=max(0.5, spacing),
+        delta_frac=0.05,
+        flip_second=not same_dir  # flip only if originally opposite direction
+    )
+    if avg_ang > angle_avg_tol_deg:
+        return False
     # 3) Optional along-track overlap (computed on aligned pair).
     if min_overlap_ratio > 0.0:
         shorter, longer = (A_dist, B_dist) if A_dist.length <= B_dist.length else (B_dist, A_dist)
@@ -218,6 +304,7 @@ def group_lanes_by_geometry(
     serial_reject_tol: float = 2.0,
     min_overlap_ratio: float = 0.0,
     pair_expand: float = 6.0,   # prefilter radius for candidate pairs
+    angle_avg_tol_deg: float = 20.0, # <-- NEW: mean heading difference threshold
 ) -> gpd.GeoDataFrame:
     """
     Group lane polylines into corridor IDs ("road_id") under direction-sensitive
@@ -260,6 +347,7 @@ def group_lanes_by_geometry(
                 angle_tol_deg=angle_tol_deg,
                 serial_reject_tol=serial_reject_tol,
                 min_overlap_ratio=min_overlap_ratio,
+                angle_avg_tol_deg=angle_avg_tol_deg
             ):
                 union(i, j)
 
@@ -667,3 +755,125 @@ def assign_lane_ids_per_group(lanes_gdf: gpd.GeoDataFrame, ref_lines: Dict[int, 
             lanes_gdf.at[idx, "lane_side"] = side
  
     return lanes_gdf
+
+
+def extract_lanes_and_links_with_fids(
+    lane_graph: nx.DiGraph,
+    origin=(0, 0), # left-top corner in meters
+    resolution=(0.125, 0.125),
+    output_path=None,
+    crs_proj: CRS = None,
+):
+    origin_x, origin_y = origin
+    origin_m = (origin_x, origin_y)
+    def pixel_to_geo(path, origin_m, resolution):
+        x0, y0 = origin_m
+        dx, dy = resolution
+        geopath = []
+        for node_id in path:
+            x, y = lane_graph.nodes[node_id].get("pos", (0, 0))
+            mx = x0 + x * dx
+            my = y0 + y * dy
+            geopath.append((mx, my))
+        return geopath
+    
+    rows = []
+    fid_counter = 0
+    node_to_fid = {}
+    valid_lane_combinations = {
+        ("in", "out"),
+        ("in", "split"),
+        ("split", "out"),
+        ("in", "merge"),
+        ("merge", "out"),
+    }
+    valid_link_combinations = {("out", "in")}
+    junction_types = {"in", "out", "split", "merge"}
+    def process_segment(path):
+        """Add one lane/link row from a node sequence."""
+        nonlocal fid_counter
+        if len(path) < 2:
+            return None
+        src, tgt = path[0], path[-1]
+        src_type = lane_graph.nodes[src].get("type")
+        tgt_type = lane_graph.nodes[tgt].get("type")
+        is_lane = (src_type, tgt_type) in valid_lane_combinations
+        is_link = (src_type, tgt_type) in valid_link_combinations
+        if not (is_lane or is_link):
+            return None
+        geo_path = pixel_to_geo(path, origin_m=origin_m, resolution=resolution)
+        geometry = LineString(geo_path)
+        fid = str(fid_counter)
+        fid_counter += 1
+        row = {
+            "fid": fid,
+            "type": "lane" if is_lane else "link",
+            "subtype": f"{src_type}->{tgt_type}",
+            "start_node_id": str(src),
+            "end_node_id": str(tgt),
+            "start_type": src_type,
+            "end_type": tgt_type,
+            "start_x": geo_path[0][0],
+            "start_y": geo_path[0][1],
+            "end_x": geo_path[-1][0],
+            "end_y": geo_path[-1][1],
+            "edge_nodes": str(path),
+            "geometry": geometry,
+            "from_fid": None,
+            "to_fid": None,
+        }
+        node_to_fid[(str(src), str(tgt))] = fid
+        rows.append(row)
+        return fid
+    # --- Traverse graph: build segments from junctions ---
+    for node, data in lane_graph.nodes(data=True):
+        if data.get("type") in {"in", "split", "merge"}:
+            for succ in lane_graph.successors(node):
+                path = [node, succ]
+                current = succ
+                while (
+                    lane_graph.nodes[current].get("type") not in junction_types
+                    and lane_graph.out_degree(current) == 1
+                ):
+                    nxt = next(lane_graph.successors(current))
+                    path.append(nxt)
+                    current = nxt
+                
+                fid = process_segment(path)
+                if fid is not None:
+                    # assign fid to all edges and nodes in the segment
+                    for i in range(len(path) - 1):
+                        u, v = path[i], path[i + 1]
+                        lane_graph.edges[u, v]["fid"] = fid
+                    lane_graph.nodes[path[0]]["fid"] = fid
+                    lane_graph.nodes[path[-1]]["fid"] = fid
+    # --- Second pass: connect links <-> lanes ---
+    for row in rows:
+        if row["type"] == "link":
+            src, tgt = row["start_node_id"], row["end_node_id"]
+            for candidate in rows:
+                if candidate["type"] == "lane":
+                    if candidate["end_node_id"] == src:
+                        row["from_fid"] = str(candidate["fid"])
+                    if candidate["start_node_id"] == tgt:
+                        row["to_fid"] = str(candidate["fid"])
+    for row in rows:
+        if row["type"] == "lane":
+            src, tgt = row["start_node_id"], row["end_node_id"]
+            for candidate in rows:
+                if candidate["type"] == "link":
+                    if candidate["end_node_id"] == src:
+                        row["from_fid"] = str(candidate["fid"])
+                    if candidate["start_node_id"] == tgt:
+                        row["to_fid"] = str(candidate["fid"])
+    if len(rows) == 0:
+        print("Warning: No lanes or links extracted.")
+        return None, lane_graph
+    gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=crs_proj)
+    gdf.drop(
+        columns=["start_node_id", "end_node_id", "subtype", "edge_nodes", "start_x", "start_y", "end_x", "end_y"],
+        inplace=True,
+    )
+    if output_path is not None:
+        gdf.to_file(os.path.join(output_path, "lane_links.geojson"), driver="GeoJSON")
+    return gdf, lane_graph

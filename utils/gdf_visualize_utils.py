@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import geopandas as gpd
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from shapely.geometry import LineString
@@ -36,7 +37,9 @@ def visualize_road_groups_with_reference_lines(gdf_lanes, ref_lines, ax=None, cm
     # Plot each reference line in black
     for rid, ref_geom in ref_lines.items():
         gpd.GeoSeries([ref_geom]).plot(ax=ax, color='black', linewidth=3, zorder=10)
-
+        # text the road_id on the reference line
+        x, y = ref_geom.interpolate(0.5, normalized=True).xy
+        ax.text(x[0], y[0], str(rid), fontsize=10, color='red', ha='center', va='center', zorder=11)
     ax.set_title("Road Groups with Reference Lines")
     ax.set_aspect('equal')
     ax.grid(True)
@@ -73,29 +76,52 @@ def visualize_links_with_ref_lines(gdf_links, figsize=(10, 10), save_path=None):
         plt.show()
 
 
-def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20', label_col='road_id', save_path=None):
+
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import seaborn as sns
+import os
+
+def visualize_road_groups(gdf_lanes, ax=None, label_col='road_id', save_path=None):
     """
     Visualize grouped lanes with different colors based on label_col.
+    Automatically switches to a continuous palette when classes > 20.
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 12))
 
     unique_ids = sorted(gdf_lanes[label_col].unique())
     num_ids = len(unique_ids)
+    print(f"Visualizing {num_ids} unique {label_col} groups.")
 
-    # Create color map
-    cmap_obj = plt.get_cmap(cmap, num_ids)
-    color_map = {rid: mcolors.to_hex(cmap_obj(i)) for i, rid in enumerate(unique_ids)}
+    # === Choose palette based on number of groups ===
+    if num_ids <= 20:
+        # small case → use tab20 categorical
+        cmap_obj = plt.get_cmap('tab20', num_ids)
+        colors = [mcolors.to_hex(cmap_obj(i)) for i in range(num_ids)]
+    elif num_ids <= 256:
+        # medium case → use seaborn husl (distinct hues)
+        colors = sns.color_palette("husl", num_ids).as_hex()
+    else:
+        # very large → continuous turbo colormap
+        cmap_obj = plt.get_cmap("turbo")
+        norm = mcolors.Normalize(vmin=0, vmax=num_ids-1)
+        colors = [mcolors.to_hex(cmap_obj(norm(i))) for i in range(num_ids)]
 
-    # Plot each group
+    color_map = {rid: colors[i] for i, rid in enumerate(unique_ids)}
+
+    # === Plot groups ===
     for rid in unique_ids:
         group = gdf_lanes[gdf_lanes[label_col] == rid]
-        group.plot(ax=ax, color=color_map[rid], label=rid, linewidth=2, alpha=0.8)
+        group.plot(ax=ax, color=color_map[rid], linewidth=2, alpha=0.9)
 
     ax.set_title("Lane Groups")
-    ax.set_aspect('equal')
+    ax.set_aspect("equal")
     ax.grid(True)
-    ax.legend(loc='best', title=label_col)
+
+    # Legend only if manageable
+    if num_ids <= 20:
+        ax.legend(loc='best', title=label_col)
 
     if save_path:
         plt.savefig(os.path.join(save_path, "lane_groups.png"), dpi=300)
@@ -103,6 +129,7 @@ def visualize_road_groups(gdf_lanes, ax=None, cmap='tab20', label_col='road_id',
         plt.show()
 
     return ax
+
 
 
 def plot_lane_directions(lanes_gdf:gpd.GeoDataFrame, title="Lane Directions", figsize=(10, 10), arrow_length=5):

@@ -66,9 +66,38 @@ def get_8_connected_neighbors(im, visited, row, col):
                     neighbors.append((r, c))
     return neighbors
 
+def count_white_neighbors_any(im, r, c):
+    """8-neighbor count of white pixels around (r,c), ignoring 'visited'."""
+    cnt = 0
+    H, W = im.shape
+    for dr in [-1, 0, 1]:
+        for dc in [-1, 0, 1]:
+            if dr == 0 and dc == 0:
+                continue
+            rr, cc = r + dr, c + dc
+            if 0 <= rr < H and 0 <= cc < W and im[rr, cc] > 0:
+                cnt += 1
+    return cnt
+
+def get_8_white_neighbors_any(im, row, col):
+    """All 8-connected white neighbors (ignore 'visited')."""
+    H, W = im.shape
+    out = []
+    for dr in [-1, 0, 1]:
+        for dc in [-1, 0, 1]:
+            if dr == 0 and dc == 0:
+                continue
+            r, c = row + dr, col + dc
+            if 0 <= r < H and 0 <= c < W and im[r, c] > 0:
+                out.append((r, c))
+    return out
 
 def trace_path(im, visited, start_row, start_col):
-    """Follow a path in the image along 8-connected white pixels. Returns the full traced path and the final pixel."""
+    """
+    Follow a path along 8-connected white pixels.
+    Now snaps the path endpoint into the true junction/endpoint pixel (deg != 2).
+    Returns (path_rc, end_row, end_col) as before.
+    """
     path = [(start_row, start_col)]
     visited[start_row, start_col] = True
     row, col = start_row, start_col
@@ -76,7 +105,20 @@ def trace_path(im, visited, start_row, start_col):
     while True:
         neighbors = get_8_connected_neighbors(im, visited, row, col)
         if len(neighbors) != 1:
-            break  # Stop if we reach a junction or dead-end
+            # --- NEW: if we stopped because we hit a junction area,
+            # step one more pixel *into* that junction (degree != 2)
+            # so the endpoint is the true split/merge pixel.
+            jump = None
+            for rr, cc in get_8_white_neighbors_any(im, row, col):
+                if count_white_neighbors_any(im, rr, cc) != 2:
+                    jump = (rr, cc)
+                    break
+            if jump is not None and jump not in path:
+                row, col = jump
+                path.append((row, col))
+                visited[row, col] = True
+            break
+
         row, col = neighbors[0]
         path.append((row, col))
         visited[row, col] = True
@@ -235,13 +277,14 @@ def draw_directed_graph(
     for node in G.nodes():
         node_type = G.nodes[node].get("type", "unknown")
         x, y = G.nodes[node].get("pos", (0, 0))  # Convert (row, col) to (x, y)
-        in_deg, out_deg = G.in_degree(node), G.out_degree(node)
+        
 
         # Color coding for different node types
+        # note color is in BGR format for OpenCV
         if node_type == "in":
             color = (0, 255, 0)     # Green for entry points
         elif node_type == "out":
-            color = (255, 0, 0)     # Red for exit points
+            color = (255, 0, 0)     # Blue for exit points
         elif node_type == "lane":
             color = (0, 255, 255)   # Cyan for regular lane nodes
         elif node_type == "split":
@@ -252,9 +295,8 @@ def draw_directed_graph(
             color = (200, 200, 200) # Gray for unknown types
 
         # Draw node as filled circle
-        if node_type in ["in", "out"]:
-            cv2.circle(out_lane, (x, y), 4, color, -1)
-            cv2.circle(out_normal, (x, y), 4, color, -1)
+        cv2.circle(out_lane, (x, y), 4, color, -1)
+        cv2.circle(out_normal, (x, y), 4, color, -1)
         # cv2.circle(out_lane, (x, y), 4, color, -1)
         # cv2.circle(out_normal, (x, y), 4, color, -1)
 
